@@ -331,14 +331,15 @@ Um dominio e considerado pronto quando todos os itens abaixo forem atendidos:
 
 Pre-requisitos:
 
+- Bun 1.3+
 - Node.js 18+
 - chaves de API conforme provider selecionado (ex.: `GEMINI_API_KEY`)
 
 Instalacao e build:
 
 ```bash
-npm install
-npm run build
+bun install --frozen-lockfile
+bun run build
 ```
 
 Rodar CLI (apos build):

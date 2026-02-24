@@ -3,8 +3,8 @@
 ## 1. Install and Build
 
 ```bash
-npm install
-npm run build
+bun install --frozen-lockfile
+bun run build
 ```
 
 ## 2. Choose an execution mode
@@ -51,7 +51,7 @@ Use `ProviderModelManager` for provider model refresh and cooldown control. Keep
 ## 3. Validate repository state
 
 ```bash
-npm run repo:validate
+bun run repo:validate
 ```
 
 ## 4. OAuth multi-account quickstart (optional)
@@ -85,5 +85,5 @@ node packages/cli/dist/index.js --provider openai
 ## 6. Release readiness check
 
 ```bash
-npm run release:check
+bun run release:check
 ```

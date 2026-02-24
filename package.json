@@ -11,11 +11,12 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w @omni-agent/core && npm run build -w @omni-agent/providers && npm run build -w @omni-agent/tools && npm run build -w @omni-agent/cli && npm run build -w @omni-agent/webmcp",
-    "test": "npm run test -w @omni-agent/core --if-present && npm run test -w @omni-agent/providers --if-present && npm run test -w @omni-agent/tools --if-present && npm run test -w @omni-agent/cli --if-present",
-    "check": "npm run build && npm test",
-    "lint": "npm run lint --workspaces --if-present",
-    "clean": "npm run clean --workspaces --if-present",
+    "build": "bun run --parallel --workspaces --if-present build",
+    "test": "bun run --parallel --workspaces --if-present test",
+    "check": "bun run build && bun run test",
+    "lint": "bun run --parallel --workspaces --if-present lint",
+    "clean": "bun run --parallel --workspaces --if-present clean",
+    "install:frozen": "bun install --frozen-lockfile",
     "repo:validate": "bash scripts/validate-repo.sh",
     "release:check": "npm run check && npm pack --dry-run",
     "release:pack": "npm pack --workspaces --if-present --pack-destination dist-artifacts",
