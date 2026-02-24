@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.36.0",
-    "@aws-sdk/client-bedrock-runtime": "^3.744.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.997.0",
     "@omni-agent/core": "*",
     "openai": "^4.85.0",
     "zod": "^3.24.2",
