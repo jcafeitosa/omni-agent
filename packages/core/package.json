@@ -13,7 +13,7 @@
   "dependencies": {
     "@types/js-yaml": "^4.0.9",
     "js-yaml": "^4.1.1",
-    "zod": "^3.25.76",
+    "zod": "^4.3.6",
     "zod-to-json-schema": "^3.25.1"
   },
   "peerDependencies": {
