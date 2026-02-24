@@ -1,24 +1,36 @@
 {
-    "name": "@omni-agent/core",
-    "version": "0.1.0",
-    "description": "Core loop, state, and Agent base classes for OmniAgent",
-    "main": "dist/index.js",
-    "types": "dist/index.d.ts",
-    "type": "module",
-    "scripts": {
-        "build": "tsc",
-        "clean": "rm -rf dist"
-    },
-    "dependencies": {
-        "@types/js-yaml": "^4.0.9",
-        "js-yaml": "^4.1.1",
-        "zod": "^3.25.76",
-        "zod-to-json-schema": "^3.25.1"
-    },
-    "peerDependencies": {
-        "typescript": "^5.0.0"
-    },
-    "devDependencies": {
-        "@types/node": "^25.3.0"
-    }
+  "name": "@omni-agent/core",
+  "version": "0.1.0",
+  "description": "Core loop, state, and Agent base classes for OmniAgent",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "js-yaml": "^4.1.1",
+    "zod": "^3.25.76",
+    "zod-to-json-schema": "^3.25.1"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jcafeitosa/omni-agent.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ]
 }

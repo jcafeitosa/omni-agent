@@ -14,6 +14,13 @@ Biblioteca/monorepo para orquestracao e gerenciamento de agentes com foco em por
 - Guia de mantenedores: [docs/maintainers-guide.md](./docs/maintainers-guide.md)
 - Ownership de codigo: [.github/CODEOWNERS](./.github/CODEOWNERS)
 
+## Releases e Packages
+
+- Release automatizado via tag `v*.*.*` em [`.github/workflows/release.yml`](./.github/workflows/release.yml)
+- Publicacao automatizada de pacotes via [`.github/workflows/packages.yml`](./.github/workflows/packages.yml)
+- Segredo necessario para npm: `NPM_TOKEN`
+- Publicacao em GitHub Packages exige scope igual ao owner do repositorio
+
 ## Guias e Exemplos
 
 - Onboarding: [docs/guides/getting-started.md](./docs/guides/getting-started.md)

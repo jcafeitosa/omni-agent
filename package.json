@@ -17,7 +17,10 @@
     "lint": "npm run lint --workspaces --if-present",
     "clean": "npm run clean --workspaces --if-present",
     "repo:validate": "bash scripts/validate-repo.sh",
-    "release:check": "npm run check && npm pack --dry-run"
+    "release:check": "npm run check && npm pack --dry-run",
+    "release:pack": "npm pack --workspaces --if-present --pack-destination dist-artifacts",
+    "release:publish:npm": "node ./scripts/publish-workspaces.mjs --registry=https://registry.npmjs.org --access=public --provenance",
+    "release:publish:github": "node ./scripts/publish-workspaces.mjs --registry=https://npm.pkg.github.com"
   },
   "devDependencies": {
     "@types/glob": "^8.1.0",

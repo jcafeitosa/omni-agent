@@ -20,5 +20,17 @@
     "@omni-agent/core": "*",
     "playwright": "^1.58.2",
     "zod": "^3.23.0"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jcafeitosa/omni-agent.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ]
 }

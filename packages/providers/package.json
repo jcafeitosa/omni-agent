@@ -18,5 +18,17 @@
     "openai": "^4.85.0",
     "zod": "^3.24.2",
     "zod-to-json-schema": "^3.24.1"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jcafeitosa/omni-agent.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ]
 }

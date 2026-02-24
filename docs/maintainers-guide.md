@@ -17,6 +17,9 @@
 - Update `CHANGELOG.md` continuously.
 - Run `npm run release:check` before tagging.
 - Tag semantic versions only after CI green on `main`.
+- Use `npm run release:pack` to validate workspace artifacts locally.
+- Use `npm run release:publish:npm` for manual npm publish fallback.
+- Use `npm run release:publish:github` for manual GitHub Packages publish fallback.
 
 ## Incident Response
 
