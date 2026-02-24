@@ -116,6 +116,9 @@ export class BedrockProvider implements Provider {
         return {
             text: finalString,
             toolCalls: parsedToolCalls,
+            requestId: (response as any)?.$metadata?.requestId,
+            provider: this.name,
+            model: this.options.model,
             usage: response.usage ? {
                 inputTokens: response.usage.inputTokens || 0,
                 outputTokens: response.usage.outputTokens || 0

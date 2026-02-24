@@ -24,6 +24,12 @@ import { parallelDelegateTool } from "../tools/parallel-delegate.js";
 import type { AgentManager } from "../state/agent-manager.js";
 import { AgentsCommand } from "../commands/agents-command.js";
 import { SkillsCommand } from "../commands/skills-command.js";
+import { SecurityReviewCommand } from "../commands/security-review-command.js";
+import { z } from "zod";
+import { parseStructuredResult } from "../helpers/structured-result.js";
+import { EventLogStore } from "../state/event-log-store.js";
+import { OTelLiteManager } from "../events/otel-lite.js";
+import { parsePlanUpdatePayload, parseRequestUserInputPayload } from "../events/protocol-events.js";
 
 interface AgentLoopOptions {
     session: AgentSession;
@@ -38,6 +44,20 @@ interface AgentLoopOptions {
     policyEngine?: PolicyEngine;
     agentManager?: AgentManager;
     workingDirectory?: string;
+    compactionControl?: {
+        enabled: boolean;
+        contextTokenThreshold?: number;
+        targetRatio?: number;
+        summaryPrefix?: string;
+    };
+    structuredOutput?: {
+        schema?: z.ZodTypeAny;
+        strict?: boolean;
+        failOnValidationError?: boolean;
+    };
+    toolRunnerMode?: "standard" | "provider_native";
+    eventLogStore?: EventLogStore;
+    otelManager?: OTelLiteManager;
 }
 
 /**
@@ -72,6 +92,20 @@ export class AgentLoop {
     private readonly workingDirectory: string;
     private isInterrupted = false;
     private configState = new Map<string, number>();
+    private readonly compactionControl?: {
+        enabled: boolean;
+        contextTokenThreshold?: number;
+        targetRatio?: number;
+        summaryPrefix?: string;
+    };
+    private readonly structuredOutput?: {
+        schema?: z.ZodTypeAny;
+        strict?: boolean;
+        failOnValidationError?: boolean;
+    };
+    private readonly toolRunnerMode: "standard" | "provider_native";
+    private readonly eventLogStore?: EventLogStore;
+    private readonly otelManager?: OTelLiteManager;
 
     constructor(options: AgentLoopOptions) {
         this.session = options.session;
@@ -87,6 +121,11 @@ export class AgentLoop {
         this.policyEngine = options.policyEngine;
         this.agentManager = options.agentManager;
         this.workingDirectory = options.workingDirectory || process.cwd();
+        this.compactionControl = options.compactionControl;
+        this.structuredOutput = options.structuredOutput;
+        this.toolRunnerMode = options.toolRunnerMode || "standard";
+        this.eventLogStore = options.eventLogStore;
+        this.otelManager = options.otelManager;
 
         if (this.policyEngine && !options.permissionManager) {
             this.permissionManager.setPolicyEngine(this.policyEngine);
@@ -113,6 +152,7 @@ export class AgentLoop {
         this.commandRegistry.register(new ClearCommand());
         this.commandRegistry.register(new AgentsCommand());
         this.commandRegistry.register(new SkillsCommand());
+        this.commandRegistry.register(new SecurityReviewCommand());
 
         this.contextLoader = new ContextLoader();
 
@@ -147,8 +187,58 @@ export class AgentLoop {
         this.session.eventBus.emit("task_notification", notification);
     }
 
+    public emitRequestUserInput(payload: {
+        call_id: string;
+        turn_id?: string;
+        questions: Array<{
+            id: string;
+            header: string;
+            question: string;
+            isOther?: boolean;
+            isSecret?: boolean;
+            options?: Array<{ label: string; description: string }>;
+        }>;
+    }): void {
+        const normalized = parseRequestUserInputPayload(payload);
+        if (!normalized) {
+            this.session.eventBus.emit("status", {
+                message: "Invalid request_user_input payload ignored."
+            });
+            return;
+        }
+        this.session.eventBus.emit("request_user_input", normalized);
+    }
+
+    public emitPlanUpdate(payload: {
+        explanation?: string;
+        plan: Array<{ step: string; status: "pending" | "in_progress" | "completed" }>;
+    }): void {
+        const normalized = parsePlanUpdatePayload(payload);
+        if (!normalized) {
+            this.session.eventBus.emit("status", {
+                message: "Invalid plan_update payload ignored."
+            });
+            return;
+        }
+        this.session.eventBus.emit("plan_update", normalized);
+    }
+
     public async promptSuggestion(): Promise<string[]> {
         return this.generatePromptSuggestions();
+    }
+
+    public compactNow(): { removedMessagesCount: number; newTokenCount: number } {
+        const threshold = this.compactionControl?.contextTokenThreshold || 100_000;
+        const result = this.session.compactHistory({
+            maxTokens: threshold,
+            targetRatio: this.compactionControl?.targetRatio || 0.8,
+            injectSummary: true,
+            summaryPrefix: this.compactionControl?.summaryPrefix || "Compaction summary"
+        });
+        return {
+            removedMessagesCount: result.removedMessagesCount,
+            newTokenCount: result.newTokenCount
+        };
     }
 
     /**
@@ -322,6 +412,17 @@ export class AgentLoop {
         const onTaskNotification = (data: any) => {
             const subtype = data?.subtype;
             if (!subtype) return;
+            this.otelManager?.counter("task.notification", 1, { subtype: String(subtype) });
+            void this.eventLogStore?.append({
+                ts: Date.now(),
+                type: "task_notification",
+                subtype: String(subtype),
+                payload: {
+                    task_id: data.task_id ? String(data.task_id) : "",
+                    tool_use_id: data.tool_use_id ? String(data.tool_use_id) : undefined,
+                    agent_name: data.agent_name ? String(data.agent_name) : undefined
+                }
+            });
             bubbledEvents.push({
                 type: "task_notification",
                 subtype,
@@ -332,8 +433,47 @@ export class AgentLoop {
                 uuid: data.uuid || randomUUID()
             });
         };
+        const onRequestUserInput = (data: any) => {
+            const parsed = parseRequestUserInputPayload(data);
+            if (!parsed) return;
+            this.otelManager?.counter("request_user_input", 1, { provider: this.provider.name });
+            void this.eventLogStore?.append({
+                ts: Date.now(),
+                type: "request_user_input",
+                payload: {
+                    call_id: parsed.call_id,
+                    turn_id: parsed.turn_id,
+                    questions_count: parsed.questions.length
+                }
+            });
+            bubbledEvents.push({
+                type: "request_user_input",
+                payload: parsed,
+                uuid: data.uuid || randomUUID()
+            });
+        };
+        const onPlanUpdate = (data: any) => {
+            const parsed = parsePlanUpdatePayload(data);
+            if (!parsed) return;
+            this.otelManager?.counter("plan.update", 1, { provider: this.provider.name });
+            void this.eventLogStore?.append({
+                ts: Date.now(),
+                type: "plan_update",
+                payload: {
+                    explanation: parsed.explanation,
+                    steps_count: parsed.plan.length
+                }
+            });
+            bubbledEvents.push({
+                type: "plan_update",
+                payload: parsed,
+                uuid: data.uuid || randomUUID()
+            });
+        };
         this.session.eventBus.on("status", onStatus);
         this.session.eventBus.on("task_notification", onTaskNotification);
+        this.session.eventBus.on("request_user_input", onRequestUserInput);
+        this.session.eventBus.on("plan_update", onPlanUpdate);
 
         try {
             if (this.hookManager) {
@@ -360,6 +500,15 @@ export class AgentLoop {
                 }
 
                 turnCount++;
+                this.otelManager?.counter("turn.started", 1, {
+                    provider: this.provider.name,
+                    agent: this.agentName || "default"
+                });
+                void this.eventLogStore?.append({
+                    ts: Date.now(),
+                    type: "turn_started",
+                    payload: { turn: turnCount, provider: this.provider.name, agent: this.agentName }
+                });
                 const currentCost = this.session.calculateApproximateCost();
                 if (this.maxCostUsd !== undefined && currentCost > this.maxCostUsd) {
                     const message = `Execution budget exceeded: $${currentCost.toFixed(4)} > $${this.maxCostUsd.toFixed(4)}`;
@@ -402,6 +551,25 @@ export class AgentLoop {
 
                 this.session.eventBus.emit("turnStart", { turnNumber: turnCount });
 
+                if (this.compactionControl?.enabled) {
+                    const threshold = this.compactionControl.contextTokenThreshold || 100_000;
+                    const estimated = this.session.estimateContextTokens();
+                    if (estimated > threshold) {
+                        const compacted = this.session.compactHistory({
+                            maxTokens: threshold,
+                            targetRatio: this.compactionControl.targetRatio || 0.8,
+                            injectSummary: true,
+                            summaryPrefix: this.compactionControl.summaryPrefix || "Compaction summary"
+                        });
+                        yield {
+                            type: "status",
+                            subtype: "info",
+                            message: `Auto-compaction applied. removed=${compacted.removedMessagesCount}, tokens=${compacted.newTokenCount}`,
+                            uuid: randomUUID()
+                        };
+                    }
+                }
+
                 if (this.hookManager) {
                     const configChanges = this.detectConfigChanges();
                     if (configChanges.length > 0) {
@@ -416,11 +584,26 @@ export class AgentLoop {
 
                 // Call LLM Provider
                 let providerResponse;
+                let routedProviderName: string | undefined;
+                let routedModelName: string | undefined;
                 try {
-                    providerResponse = await this.provider.generateText(
-                        this.session.getMessages(),
-                        Array.from(this.tools.values())
-                    );
+                    if (this.toolRunnerMode === "provider_native" && this.provider.runToolsNative) {
+                        providerResponse = await this.provider.runToolsNative(
+                            this.session.getMessages(),
+                            Array.from(this.tools.values())
+                        );
+                    } else {
+                        providerResponse = await this.provider.generateText(
+                            this.session.getMessages(),
+                            Array.from(this.tools.values())
+                        );
+                    }
+                    const routeInfo = (this.provider as any).getLastRoute?.();
+                    routedProviderName = routeInfo?.provider || providerResponse.provider || this.provider.name;
+                    routedModelName =
+                        routeInfo?.model ||
+                        providerResponse.model ||
+                        this.provider.getModelLimits?.().model;
                 } catch (error: any) {
                     const message = error?.message || "Provider failed to generate response";
                     const sdkError = this.toSDKError("provider", "PROVIDER_GENERATE_TEXT_FAILED", message, {
@@ -458,7 +641,24 @@ export class AgentLoop {
                 });
 
                 if (providerResponse.text) {
-                    yield { type: 'text', text: providerResponse.text, uuid: randomUUID() };
+                    this.otelManager?.counter("assistant.text_emitted", 1, { provider: this.provider.name });
+                    void this.eventLogStore?.append({
+                        ts: Date.now(),
+                        type: "assistant_text",
+                        payload: {
+                            provider: routedProviderName,
+                            model: routedModelName,
+                            request_id: providerResponse.requestId
+                        }
+                    });
+                    yield {
+                        type: 'text',
+                        text: providerResponse.text,
+                        request_id: providerResponse.requestId,
+                        provider: routedProviderName,
+                        model: routedModelName,
+                        uuid: randomUUID()
+                    };
                 }
 
                 if (!providerResponse.toolCalls || providerResponse.toolCalls.length === 0) {
@@ -467,10 +667,72 @@ export class AgentLoop {
                         continue;
                     }
                     const finalRes = providerResponse.text || '';
+                    let structured: any;
+                    if (this.structuredOutput) {
+                        const parsed = parseStructuredResult(
+                            finalRes,
+                            this.structuredOutput.schema,
+                            this.structuredOutput.strict !== false
+                        );
+                        if (parsed.error) {
+                            const message = `Structured output validation failed: ${parsed.error}`;
+                            const error = this.toSDKError("core", "STRUCTURED_OUTPUT_INVALID", message, {
+                                rawJson: parsed.rawJson
+                            });
+                            if (this.structuredOutput.failOnValidationError !== false) {
+                                yield {
+                                    type: "result",
+                                    subtype: "error",
+                                    result: message,
+                                    error,
+                                    request_id: providerResponse.requestId,
+                                    provider: routedProviderName,
+                                    model: routedModelName,
+                                    uuid: randomUUID()
+                                };
+                                didEmitTerminalResult = true;
+                                return;
+                            }
+                            yield {
+                                type: "status",
+                                subtype: "warning",
+                                message,
+                                error,
+                                uuid: randomUUID()
+                            };
+                        } else {
+                            structured = parsed.value;
+                        }
+                    }
                     if (this.hookManager) {
                         await this.hookManager.emit("SessionEnd", { result: finalRes });
                     }
-                    yield { type: 'result', subtype: 'success', result: finalRes, uuid: randomUUID() };
+                    yield {
+                        type: 'result',
+                        subtype: 'success',
+                        result: finalRes,
+                        structured,
+                        usage: providerResponse.usage,
+                        request_id: providerResponse.requestId,
+                        provider: routedProviderName,
+                        model: routedModelName,
+                        uuid: randomUUID()
+                    };
+                    this.otelManager?.counter("turn.completed", 1, {
+                        provider: routedProviderName || this.provider.name,
+                        status: "success"
+                    });
+                    void this.eventLogStore?.append({
+                        ts: Date.now(),
+                        type: "turn_completed",
+                        payload: {
+                            status: "success",
+                            provider: routedProviderName,
+                            model: routedModelName,
+                            request_id: providerResponse.requestId,
+                            usage: providerResponse.usage
+                        }
+                    });
                     didEmitTerminalResult = true;
                     return;
                 }
@@ -480,6 +742,18 @@ export class AgentLoop {
                     if (this.isInterrupted) break;
 
                     const toolUseID = call.id || randomUUID();
+                    this.otelManager?.counter("tool.use", 1, {
+                        tool: call.name,
+                        provider: this.provider.name
+                    });
+                    void this.eventLogStore?.append({
+                        ts: Date.now(),
+                        type: "tool_use",
+                        payload: {
+                            tool: call.name,
+                            tool_use_id: toolUseID
+                        }
+                    });
                     yield { type: 'tool_use', tool: call.name, input: call.args, tool_use_id: toolUseID, uuid: randomUUID() };
 
                     // Permission Check
@@ -583,6 +857,12 @@ export class AgentLoop {
                             toolName: call.name,
                             uuid: randomUUID()
                         });
+                        this.otelManager?.counter("tool.result", 1, { tool: call.name, status: "success" });
+                        void this.eventLogStore?.append({
+                            ts: Date.now(),
+                            type: "tool_result",
+                            payload: { tool: call.name, tool_use_id: toolUseID, status: "success" }
+                        });
                         yield { type: 'tool_result', tool: call.name, result: finalResult, tool_use_id: toolUseID, uuid: randomUUID() };
                     } catch (error: any) {
                         const errRes = error?.message || String(error);
@@ -595,6 +875,17 @@ export class AgentLoop {
                             toolName: call.name,
                             isError: true,
                             uuid: randomUUID()
+                        });
+                        this.otelManager?.counter("tool.result", 1, { tool: call.name, status: "error" });
+                        void this.eventLogStore?.append({
+                            ts: Date.now(),
+                            type: "tool_result",
+                            payload: {
+                                tool: call.name,
+                                tool_use_id: toolUseID,
+                                status: "error",
+                                error: errRes
+                            }
                         });
                         yield { type: 'tool_result', tool: call.name, result: errRes, tool_use_id: toolUseID, is_error: true, error: sdkError, uuid: randomUUID() };
                     }
@@ -614,6 +905,15 @@ export class AgentLoop {
                 error: sdkError,
                 uuid: randomUUID()
             };
+            this.otelManager?.counter("turn.completed", 1, {
+                provider: this.provider.name,
+                status: "error"
+            });
+            void this.eventLogStore?.append({
+                ts: Date.now(),
+                type: "turn_completed",
+                payload: { status: "error", error: message, provider: this.provider.name }
+            });
             yield {
                 type: "result",
                 subtype: "error",
@@ -625,10 +925,17 @@ export class AgentLoop {
         } finally {
             this.session.eventBus.off("status", onStatus);
             this.session.eventBus.off("task_notification", onTaskNotification);
+            this.session.eventBus.off("request_user_input", onRequestUserInput);
+            this.session.eventBus.off("plan_update", onPlanUpdate);
             if (this.isInterrupted && !didEmitTerminalResult) {
                 const error = this.toSDKError("core", "INTERRUPTED", "Interrupted by user");
                 yield { type: 'result', subtype: 'error', result: 'Interrupted by user', error, uuid: randomUUID() };
                 didEmitTerminalResult = true;
+            }
+            try {
+                await this.eventLogStore?.shutdown();
+            } catch {
+                // best-effort shutdown: runtime should not fail on logging backend errors
             }
         }
     }

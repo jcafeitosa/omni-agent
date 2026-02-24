@@ -6,6 +6,7 @@ import { AgentSession } from "./session.js";
 import { AgentLoop } from "../loops/agent-loop.js";
 import { Provider, ToolDefinition } from "../index.js";
 import { PolicyEngine, PolicyRule } from "./policy-engine.js";
+import { ManagedPolicyHierarchy, ManagedPolicyBundle } from "./managed-policy.js";
 import { PermissionManager, PermissionMode } from "./permissions.js";
 import { SkillManager } from "./skill-manager.js";
 import { AgentOrchestrator } from "./agent-orchestrator.js";
@@ -52,6 +53,7 @@ export interface AgentManagerOptions {
     hookManager?: HookManager;
     pluginManager?: PluginManager;
     worktreeManager?: WorktreeManager;
+    managedPolicies?: ManagedPolicyBundle[];
 }
 
 export interface AgentRuntimeOptions {
@@ -77,6 +79,7 @@ export class AgentManager {
     private readonly hookManager?: HookManager;
     private readonly pluginManager: PluginManager;
     private readonly worktreeManager: WorktreeManager;
+    private readonly managedPolicyHierarchy?: ManagedPolicyHierarchy;
 
     constructor(options: AgentManagerOptions) {
         this.providers = options.providers;
@@ -89,6 +92,9 @@ export class AgentManager {
         this.hookManager = options.hookManager;
         this.pluginManager = options.pluginManager || new PluginManager();
         this.worktreeManager = options.worktreeManager || new WorktreeManager();
+        this.managedPolicyHierarchy = options.managedPolicies?.length
+            ? new ManagedPolicyHierarchy(options.managedPolicies)
+            : undefined;
         if (this.autoLoadAgents) {
             for (const dir of this.agentDirectories) {
                 if (existsSync(dir)) {
@@ -250,7 +256,12 @@ export class AgentManager {
         this.applySkillToolPolicies(agentTools, skillBundle.skills);
         this.registerSkillHooks(skillBundle.skills);
 
-        const policyEngine = policies?.length ? new PolicyEngine(policies) : undefined;
+        const compiledManaged = this.managedPolicyHierarchy?.compile();
+        const mergedRules = [...(compiledManaged?.rules || []), ...(policies || [])];
+        const mergedPrefixRules = [...(compiledManaged?.prefixRules || [])];
+        const policyEngine = mergedRules.length || mergedPrefixRules.length
+            ? new PolicyEngine(mergedRules, mergedPrefixRules)
+            : undefined;
         const permissionManager = new PermissionManager(permissionMode || "default", undefined, policyEngine);
 
         return new AgentLoop({

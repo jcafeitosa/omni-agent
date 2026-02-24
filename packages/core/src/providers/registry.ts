@@ -18,13 +18,36 @@ export interface ProviderRegistration<TOptions = any> {
     create: (options?: TOptions) => Provider;
     modelPatterns?: RegExp[];
     capabilities?: ProviderCapabilities;
+    sourceId?: string;
 }
 
 export class ProviderRegistry {
     private registrations = new Map<string, ProviderRegistration<any>>();
 
-    register<TOptions>(registration: ProviderRegistration<TOptions>): void {
-        this.registrations.set(registration.name, registration as ProviderRegistration<any>);
+    register<TOptions>(registration: ProviderRegistration<TOptions>, sourceId?: string): void {
+        this.registrations.set(registration.name, {
+            ...(registration as ProviderRegistration<any>),
+            sourceId: sourceId || registration.sourceId
+        });
+    }
+
+    unregister(name: string): boolean {
+        return this.registrations.delete(name);
+    }
+
+    unregisterBySource(sourceId: string): number {
+        let removed = 0;
+        for (const [name, registration] of this.registrations.entries()) {
+            if (registration.sourceId === sourceId) {
+                this.registrations.delete(name);
+                removed += 1;
+            }
+        }
+        return removed;
+    }
+
+    clear(): void {
+        this.registrations.clear();
     }
 
     has(name: string): boolean {
@@ -73,4 +96,3 @@ export class ProviderRegistry {
         return provider.getModelLimits(model);
     }
 }
-

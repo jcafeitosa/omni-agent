@@ -28,6 +28,15 @@ export function estimateMessageTokens(message: Message, textEstimator = estimate
             } else if (part.type === "image_url") {
                 // High-res images for most models take ~85 to ~170 tokens, basic estimation
                 tokens += 170;
+            } else if (part.type === "document") {
+                tokens += textEstimator(JSON.stringify(part.document));
+                tokens += 20;
+            } else if (part.type === "citation") {
+                tokens += textEstimator(part.citation.text);
+                tokens += 8;
+            } else if (part.type === "code_execution") {
+                tokens += textEstimator(`${part.language || ""}\n${part.code || ""}\n${part.stdout || ""}\n${part.stderr || ""}`);
+                tokens += 16;
             }
         }
     }
@@ -38,11 +47,14 @@ export interface CompactionSettings {
     maxTokens: number;
     targetRatio?: number; // Target ratio of maxTokens after compaction (e.g., 0.8)
     preserveSystemPrompt?: boolean;
+    injectSummary?: boolean;
+    summaryPrefix?: string;
 }
 
 export interface CompactionResult {
     newTokenCount: number;
     removedMessagesCount: number;
+    removedMessages: Message[];
     compactedMessages: Message[];
 }
 
@@ -66,6 +78,7 @@ export function compactMessages(
         return {
             newTokenCount: currentTokens,
             removedMessagesCount: 0,
+            removedMessages: [],
             compactedMessages: [...messages]
         };
     }
@@ -77,6 +90,7 @@ export function compactMessages(
 
     let compacted = [...messages];
     let removedCount = 0;
+    const removedMessages: Message[] = [];
     let keepIndex = 0;
 
     // Protect system prompt at index 0 if needed
@@ -102,14 +116,55 @@ export function compactMessages(
         }
 
         // Remove elements
-        compacted.splice(keepIndex, dropCount);
+        const removed = compacted.splice(keepIndex, dropCount);
+        removedMessages.push(...removed);
         currentTokens -= droppedTokens;
         removedCount += dropCount;
+    }
+
+    if (settings.injectSummary !== false && removedMessages.length > 0) {
+        const summary = summarizeRemovedMessages(removedMessages, settings.summaryPrefix);
+        compacted.unshift({
+            role: "assistant",
+            content: summary
+        });
+        currentTokens += estimateMessageTokens(compacted[0], tokenEstimator);
     }
 
     return {
         newTokenCount: currentTokens,
         removedMessagesCount: removedCount,
+        removedMessages,
         compactedMessages: compacted
     };
+}
+
+export function summarizeRemovedMessages(messages: Message[], summaryPrefix = "Compaction summary"): string {
+    const snippets: string[] = [];
+    for (const msg of messages.slice(-24)) {
+        const role = msg.role;
+        let text = "";
+        if (typeof msg.content === "string") {
+            text = msg.content;
+        } else {
+            text = msg.content
+                .map((part) => {
+                    if (part.type === "text") return part.text;
+                    if (part.type === "tool_call") return `[tool_call:${part.toolCall.name}]`;
+                    if (part.type === "tool_result") return `[tool_result]`;
+                    if (part.type === "image_url") return "[image]";
+                    if (part.type === "document") return `[document:${part.document.name || "unnamed"}]`;
+                    if (part.type === "citation") return `[citation:${part.citation.source || "unknown"}]`;
+                    if (part.type === "code_execution") return `[code_execution:${part.language || "unknown"}]`;
+                    return "";
+                })
+                .filter(Boolean)
+                .join(" ");
+        }
+        if (!text) continue;
+        snippets.push(`- ${role}: ${text.slice(0, 220)}`);
+    }
+
+    const body = snippets.length > 0 ? snippets.join("\n") : "- No textual content available.";
+    return `${summaryPrefix}\n${body}`;
 }

@@ -28,17 +28,28 @@ Base: `anthropic-sdk-typescript/src`
   - `betaCreateMessage(...)`
 - Multimodal input basico em mensagens:
   - suporte a `image_url` em formato data URL base64 no mapeamento de mensagens
+- `ToolRunner` no core com controles avancados:
+  - `maxIterations` (protege contra loops infinitos de tool-calling)
+  - `withResponse(...)` retornando metadados (`requestId`, `provider`, `model`, `usage`)
+  - suporte a cancelamento via `AbortSignal`
+  - `toolRunnerMode=provider_native` no `AgentLoop` com fallback seguro para fluxo padrao
+- Structured output no pipeline principal do loop:
+  - parser universal de JSON (texto bruto, fenced code block e extracao por braces)
+  - validacao opcional com Zod no `AgentLoop`
+  - retorno de payload estruturado em evento final (`result.structured`)
+  - modo estrito com erro terminal configuravel (`failOnValidationError`)
+- MCP helpers de alto nivel no pacote de tools:
+  - `McpServerManager` com `listResources`, `listPrompts`, `readResource`, `getPrompt`
+  - facade `McpHelpers` para descoberta/leitura sem acoplamento ao provider
+- Memory helpers no core:
+  - `MemoryStore` (in-memory + persistencia em arquivo)
+  - operacoes `remember`, `recall`, `search`, `list`, `forget`, `compactExpired`
+- Blocos avancados no modelo interno de mensagens:
+  - `document`, `citation`, `code_execution` adicionados em `MessagePart`
+  - compaction e sumarizacao atualizadas para esses blocos
+  - mapeamento de entrada no provider para preservar semantica quando possivel
 
 ## Recursos do SDK ainda fora do fluxo principal do loop
 
-- tool runner automatico integrado ao `AgentLoop` (hoje exposto via metodo do provider)
-- parse output estruturado integrado ao pipeline principal do `AgentLoop`
-- mcp helpers (`helpers/beta/mcp`) como utilitarios de alto nivel fora do provider
-- memory helpers beta dedicados do SDK
-- cobertura completa de blocos avancados (documentos, citacoes, code_execution blocks) no modelo interno de mensagens
-
-## Direcao tecnica para fechar 100%
-
-1. estender `AgentMessage` para blocos avancados (document/file/citations/code execution)
-2. adicionar modo de execucao `toolRunner` no `AgentLoop` para providers que suportam auto-loop nativo
-3. criar adaptadores utilitarios para MCP helper do SDK Anthropic no pacote `@omni-agent/tools` ou `@omni-agent/providers`
+- sem gaps tecnicos bloqueantes no escopo mapeado para o provider e core.
+- observacao: operacoes de release/publicacao dependem de configuracao externa de repositorio/registry.

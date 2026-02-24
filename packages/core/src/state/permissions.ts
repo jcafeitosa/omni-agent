@@ -1,4 +1,5 @@
 import { PolicyEngine, ToolPolicyContext } from "./policy-engine.js";
+import { AdminControlsSettings, isFeatureEnabled } from "./admin-controls.js";
 
 /**
  * Permission Mode for the agent session.
@@ -33,6 +34,8 @@ export class PermissionManager {
     private mode: PermissionMode;
     private canUseTool?: CanUseToolCallback;
     private policyEngine?: PolicyEngine;
+    private workspaceTrusted?: boolean;
+    private adminControls?: AdminControlsSettings;
 
     constructor(mode: PermissionMode = 'default', canUseTool?: CanUseToolCallback, policyEngine?: PolicyEngine) {
         this.mode = mode;
@@ -52,10 +55,42 @@ export class PermissionManager {
         this.policyEngine = policyEngine;
     }
 
+    setWorkspaceTrusted(trusted: boolean | undefined) {
+        this.workspaceTrusted = trusted;
+    }
+
+    setAdminControls(adminControls?: AdminControlsSettings) {
+        this.adminControls = adminControls;
+    }
+
     /**
      * Checks if a tool can be executed based on the current mode and callback.
      */
     async checkPermission(toolName: string, input: any, context?: Omit<ToolPolicyContext, "toolName" | "input">): Promise<PermissionResult> {
+        if (this.workspaceTrusted === false) {
+            if (this.mode === "bypassPermissions" || this.mode === "acceptEdits" || this.mode === "dontAsk") {
+                return {
+                    behavior: "deny",
+                    reason: "Privileged permission modes are disabled in untrusted workspace."
+                };
+            }
+        }
+
+        if (this.adminControls) {
+            if (isFeatureEnabled(this.adminControls.strictModeEnabled, true) && this.mode === "bypassPermissions") {
+                return {
+                    behavior: "deny",
+                    reason: "Bypass mode is disabled by administrator."
+                };
+            }
+            if (this.adminControls.mcpEnabled === false && toolName.startsWith("mcp_")) {
+                return {
+                    behavior: "deny",
+                    reason: "MCP tools are disabled by administrator."
+                };
+            }
+        }
+
         if (this.policyEngine) {
             const decision = this.policyEngine.evaluateTool({
                 toolName,

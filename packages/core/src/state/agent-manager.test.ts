@@ -85,3 +85,75 @@ You are a reviewer.
     }
 });
 
+test("agent manager applies managed enterprise policy precedence", async () => {
+    const root = mkdtempSync(join(tmpdir(), "omni-agent-manager-policy-test-"));
+    const agentsDir = join(root, "agents");
+    mkdirSync(agentsDir, { recursive: true });
+    writeFileSync(
+        join(agentsDir, "runner.md"),
+        `---
+name: runner
+description: runner agent
+tools: bash
+---
+Run shell commands.
+`
+    );
+
+    const providers = new Map<string, Provider>([
+        [
+            "default",
+            {
+                ...createProvider(),
+                async generateText() {
+                    return {
+                        text: "",
+                        toolCalls: [{ id: "t1", name: "bash", args: { command: "rm -rf /tmp/demo" } }]
+                    };
+                }
+            }
+        ]
+    ]);
+    const tools = new Map<string, ToolDefinition>([
+        ["bash", { name: "bash", description: "bash", parameters: z.object({ command: z.string() }), execute: async () => "ok" }]
+    ]);
+
+    try {
+        const manager = new AgentManager({
+            providers,
+            tools,
+            defaultModelConfig: { provider: "default", model: "mock-model" },
+            agentDirectories: [agentsDir],
+            autoLoadAgents: true,
+            autoLoadSkills: false,
+            managedPolicies: [
+                {
+                    tier: "workspace",
+                    rules: [{ id: "allow-bash", effect: "allow", tools: ["bash"] }]
+                },
+                {
+                    tier: "enterprise",
+                    prefixRules: [
+                        {
+                            id: "deny-rm",
+                            decision: "forbidden",
+                            pattern: ["rm"],
+                            justification: "blocked by enterprise"
+                        }
+                    ]
+                }
+            ]
+        });
+
+        const events: Array<any> = [];
+        for await (const event of manager.createAgent("runner").runStream("go")) {
+            events.push(event);
+            if (event.type === "result") break;
+        }
+        const deniedToolResult = events.find((event) => event.type === "tool_result" && event.is_error === true);
+        assert.equal(Boolean(deniedToolResult), true);
+        assert.match(String(deniedToolResult?.result || ""), /denied/i);
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});

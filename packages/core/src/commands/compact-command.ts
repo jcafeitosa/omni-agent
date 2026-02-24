@@ -17,18 +17,18 @@ export class CompactCommand implements SlashCommand {
             uuid: randomUUID()
         };
 
-        // In the future: replace older messages with a summary message.
+        const result = context.loop.compactNow();
 
         yield {
             type: 'text',
-            text: "History compacted successfully (placeholder).",
+            text: `History compacted. removed=${result.removedMessagesCount}, estimated_tokens=${result.newTokenCount}.`,
             uuid: randomUUID()
         };
 
         yield {
             type: 'result',
             subtype: 'success',
-            result: 'summarized',
+            result: 'history compacted',
             uuid: randomUUID()
         };
     }

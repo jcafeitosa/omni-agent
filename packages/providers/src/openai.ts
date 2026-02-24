@@ -2,6 +2,8 @@ import { OpenAI } from "openai";
 import { Provider, ProviderResponse, AgentMessage, ToolDefinition, ProviderModelLimits } from "@omni-agent/core";
 import { normalizeToolCall, parseJsonObjectArgs } from "./utils/tool-call-normalizer.js";
 import { resolveModelLimits } from "./utils/model-limits.js";
+import { normalizeMistralToolCallId, ProviderCompatProfile, resolveProviderCompatProfile } from "./utils/provider-compat.js";
+import { transformMessagesForProvider } from "./utils/message-transformer.js";
 
 export interface OpenAIProviderOptions {
     apiKey?: string;
@@ -11,6 +13,7 @@ export interface OpenAIProviderOptions {
     defaultHeaders?: Record<string, string>;
     maxOutputTokens?: number;
     oauthProfileId?: string;
+    compatProfile?: ProviderCompatProfile;
 }
 
 export class OpenAIProvider implements Provider {
@@ -37,10 +40,15 @@ export class OpenAIProvider implements Provider {
         messages: AgentMessage[],
         tools?: ToolDefinition[]
     ): Promise<ProviderResponse> {
+        const compat = this.getCompatProfile();
+        const normalizedMessages = transformMessagesForProvider(messages, {
+            injectMissingToolResults: true,
+            normalizeToolCallId: compat.requiresMistralToolIds ? normalizeMistralToolCallId : undefined
+        });
 
         const openAiMessages: Array<OpenAI.Chat.ChatCompletionMessageParam> = [];
 
-        for (const msg of messages) {
+        for (const msg of normalizedMessages) {
             if (msg.role === "system") {
                 openAiMessages.push({ role: "system", content: msg.text || "" });
             } else if (msg.role === "user") {
@@ -62,11 +70,15 @@ export class OpenAIProvider implements Provider {
                     tool_calls: tool_calls?.length ? tool_calls : undefined
                 });
             } else if (msg.role === "toolResult") {
-                openAiMessages.push({
+                const toolMessage: any = {
                     role: "tool",
                     tool_call_id: msg.toolCallId || "UNKNOWN_ID",
                     content: msg.text || ""
-                });
+                };
+                if (compat.requiresToolResultName && msg.toolName) {
+                    toolMessage.name = msg.toolName;
+                }
+                openAiMessages.push(toolMessage);
             }
         }
 
@@ -104,6 +116,9 @@ export class OpenAIProvider implements Provider {
         return {
             text: finalString,
             toolCalls: parsedToolCalls,
+            requestId: (response as any)?._request_id || (response as any)?.id,
+            provider: this.name,
+            model: this.options.model,
             usage: response.usage ? {
                 inputTokens: response.usage.prompt_tokens,
                 outputTokens: response.usage.completion_tokens
@@ -144,5 +159,12 @@ export class OpenAIProvider implements Provider {
 
     public getOAuthProfileId(): string | undefined {
         return this.options.oauthProfileId;
+    }
+
+    protected getCompatProfile(): ProviderCompatProfile {
+        if (this.options.compatProfile) {
+            return this.options.compatProfile;
+        }
+        return resolveProviderCompatProfile(this.name, this.options.baseURL);
     }
 }

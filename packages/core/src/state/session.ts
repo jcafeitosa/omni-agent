@@ -1,5 +1,6 @@
 import { AgentMessage, ToolCall } from "../types/messages.js";
 import { EventBus } from "../events/event-bus.js";
+import { compactMessages, CompactionResult, CompactionSettings, estimateMessageTokens } from "./compaction.js";
 
 interface AgentSessionOptions {
     systemPrompt?: string;
@@ -40,6 +41,11 @@ export class AgentSession {
         return this.messages;
     }
 
+    replaceMessages(messages: AgentMessage[]): void {
+        this.messages = messages;
+        this.eventBus.emit("messageReplaced", { count: messages.length });
+    }
+
     addMessage(message: AgentMessage): void {
         this.messages.push(message);
         this.eventBus.emit("messageAppended", { message });
@@ -54,6 +60,15 @@ export class AgentSession {
 
     getUsage(): Usage {
         return this.usage;
+    }
+
+    replaceUsage(usage: Usage): void {
+        this.usage = {
+            inputTokens: Number(usage?.inputTokens || 0),
+            outputTokens: Number(usage?.outputTokens || 0),
+            thinkingTokens: Number(usage?.thinkingTokens || 0)
+        };
+        this.eventBus.emit("usageUpdated", { usage: this.usage });
     }
 
     /**
@@ -101,6 +116,20 @@ export class AgentSession {
         return this._steeringMessages.length + this._followUpMessages.length;
     }
 
+    estimateContextTokens(): number {
+        return this.messages.reduce((acc, msg) => acc + estimateMessageTokens(msg), 0);
+    }
+
+    compactHistory(settings: CompactionSettings): CompactionResult {
+        const result = compactMessages(this.messages, settings);
+        this.messages = result.compactedMessages as AgentMessage[];
+        this.eventBus.emit("historyCompacted", {
+            removed: result.removedMessagesCount,
+            tokens: result.newTokenCount
+        });
+        return result;
+    }
+
     /**
      * Resets the session to its initial state.
      */
@@ -121,6 +150,14 @@ export class AgentSession {
             systemPrompt: this.systemPrompt,
             usage: this.usage
         };
+    }
+
+    restoreFromJSON(data: any): void {
+        this.systemPrompt = data?.systemPrompt || this.systemPrompt;
+        this.messages = Array.isArray(data?.messages) ? data.messages : [];
+        this.usage = data?.usage || { inputTokens: 0, outputTokens: 0, thinkingTokens: 0 };
+        this.eventBus.emit("messageReplaced", { count: this.messages.length });
+        this.eventBus.emit("usageUpdated", { usage: this.usage });
     }
 
     /**

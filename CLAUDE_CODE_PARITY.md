@@ -51,7 +51,7 @@ Data source: local analysis of `../claude-code` (README, plugins docs, CHANGELOG
 - `DONE` PreToolUse/PostToolUse/SessionStart/SessionEnd integration
 - `DONE` Multi-agent lifecycle hooks: `SubagentStart`, `SubagentStop`, `TaskCompleted`, `TeammateIdle`
 - `DONE` Task/subagent/worktree lifecycle hooks wired into orchestration flow
-- `PARTIAL` Managed enterprise hierarchy remains simplified (non-blocking)
+- `DONE` Managed policy hierarchy via declarative policy engine + rule priority/precedence
 
 ## Permissions and Policy
 
@@ -76,7 +76,7 @@ Data source: local analysis of `../claude-code` (README, plugins docs, CHANGELOG
 - `DONE` Token refresh and header construction
 - `DONE` CLI identity profiles (`codex`, `claude-code`, `cursor`, `gemini-cli`)
 - `DONE` Multi-account OAuth sessions per provider with balancing (`single`, `round_robin`, `least_recent`, `parallel`, `random`)
-- `PARTIAL` Provider-specific interactive login UX (browser helpers/CLI command set) pending
+- `DONE` Provider-specific interactive login UX via CLI OAuth commands (`oauth profiles|login|accounts|delete-account`)
 
 ## MCP and Plugins
 
@@ -88,5 +88,5 @@ Data source: local analysis of `../claude-code` (README, plugins docs, CHANGELOG
 
 ## Remaining High-Impact Gaps
 
-1. Managed policy hierarchy + enterprise settings precedence
-2. Plugin marketplace UI/distribution workflow (runtime backend already implemented)
+1. None in core/runtime scope.
+2. Pending external productization only: hosted marketplace UI and package publication governance.

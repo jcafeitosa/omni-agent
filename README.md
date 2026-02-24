@@ -59,6 +59,13 @@ Biblioteca/monorepo para orquestracao e gerenciamento de agentes com foco em por
 - `agents/`: definicoes de agentes em Markdown + frontmatter YAML
 - `.omniagent/knowledge_base.json`: persistencia da base vetorial local
 
+## Operacao (analytics)
+
+- relatorio de custo por eventos: `npm run ops:cost-report -- --events ./logs/events.jsonl`
+- export de transcricao de sessao: `npm run ops:export-transcript -- --input ./session.json --output ./transcript.md`
+- export estruturado de analytics: `npm run ops:export-analytics -- --events ./logs/events.jsonl --output ./logs/costs.csv --format csv`
+- persistencia automatica no CLI: `omni --session-file ./.omniagent/session.json --event-log-file ./.omniagent/events.jsonl`
+
 ## Funcionalidades implementadas
 
 ## 1) Loop e sessao
@@ -87,7 +94,7 @@ Biblioteca/monorepo para orquestracao e gerenciamento de agentes com foco em por
 - variantes: `AzureOpenAIProvider`, `VertexProvider`
 - OpenAI-compatible: `Groq`, `XAI`, `OpenRouter`, `Mistral`, `DeepSeek`, `Cerebras`, `Ollama`
 
-Observacao: embeddings estao implementados para Gemini e pendentes em parte dos outros providers.
+Observacao: embeddings estao implementados em OpenAI, Gemini e Bedrock. Para Anthropic Messages API, embeddings nao sao suportados nativamente e devem usar provider dedicado.
 
 ### Ollama local ou remoto
 
@@ -229,12 +236,30 @@ Observacao: esta entrega cobre a base arquitetural de auth. A execucao completa 
 - tools de delegacao: `delegate` e `parallel_delegate`
 - hooks externos por evento via `hooks.json` (comandos Node/Python/Bash etc.)
 
+## 4.1) Runtime de plugins e operacao de trabalho
+
+- `PluginManager` com catalogo versionado e metadados de marketplace (`author`, `category`, `capabilities`, `connectorCategories`)
+- `ConnectorRegistry` para resolver conectores por capability com estrategias (`priority`, `round_robin`, `lowest_cost`, `lowest_latency`, `random`) e cooldown por falha
+- `MemoryStore` com duas camadas (`hot` e `deep`) incluindo promocao/rebaixamento (`promoteToHot`, `demoteToDeep`)
+- `TasksBoard` para gerenciar `TASKS.md` (parse/list/add/update/status/save) como backlog operacional
+- `createPluginScaffold` + `validatePluginStructure` para criar e validar plugins padronizados
+
 ## 5) Contexto semantico
 
 - `Indexer` para varrer codigo e gerar embeddings por chunk
 - `VectorStore` em memoria e `PersistentVectorStore` em disco
 - `semantic_search` adicionada automaticamente no loop
 - `ContextLoader` injeta `CLAUDE.md` (quando encontrado) como constituicao do projeto
+
+## 5.1) Security review e triagem
+
+- comando slash `/security-review` com analise de diff git
+- parser JSON resiliente para output de modelo (`parseJsonWithFallbacks`)
+- triagem por camadas com `FindingsFilter`:
+  - exclusoes deterministicas (hard rules)
+  - calibracao opcional por modelo com score de confianca
+  - fail-open em erro de calibracao
+- lock/reserva de execucao com `RunReservationManager` para evitar corrida de runs
 
 ## 6) Exposicao MCP HTTP
 
@@ -261,7 +286,7 @@ Observacao: esta entrega cobre a base arquitetural de auth. A execucao completa 
 
 ## Dominio C - Providers multivendor
 
-- completar embeddings em providers pendentes
+- manter matriz de embeddings por provider atualizada (OpenAI/Gemini/Bedrock nativo; Anthropic via provider dedicado)
 - normalizar comportamento de tool-calling entre APIs
 - criar matriz de compatibilidade por modelo/provider
 
@@ -312,6 +337,27 @@ Rodar CLI (apos build):
 
 ```bash
 node packages/cli/dist/index.js --model gemini-2.5-flash
+```
+
+Comandos operacionais da CLI:
+
+```bash
+# scaffolding e validacao de plugin
+node packages/cli/dist/index.js plugins scaffold --name ops-assistant --root .
+node packages/cli/dist/index.js plugins validate --path ./ops-assistant
+
+# marketplace/catalogo de plugins
+node packages/cli/dist/index.js plugins catalog-add --id ops-assistant@1.0.0 --name ops-assistant --plugin-version 1.0.0 --source-type path --path ./ops-assistant
+node packages/cli/dist/index.js plugins catalog-list
+node packages/cli/dist/index.js plugins catalog-install --name ops-assistant
+
+# backlog TASKS.md
+node packages/cli/dist/index.js tasks add --file TASKS.md --title "Implementar roteamento" --status in_progress
+node packages/cli/dist/index.js tasks list --file TASKS.md
+
+# conectores por capability
+node packages/cli/dist/index.js connectors upsert --id crm-main --capability crm.read --provider remote-mcp --priority 10
+node packages/cli/dist/index.js connectors resolve --capability crm.read --strategy priority
 ```
 
 Rodar WebMCP (apos build):

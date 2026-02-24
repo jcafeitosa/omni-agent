@@ -54,7 +54,35 @@ Use `ProviderModelManager` for provider model refresh and cooldown control. Keep
 npm run repo:validate
 ```
 
-## 4. Release readiness check
+## 4. OAuth multi-account quickstart (optional)
+
+List OAuth profiles:
+
+```bash
+node packages/cli/dist/index.js oauth profiles
+```
+
+Start PKCE login (prints authorization URL + state/code verifier):
+
+```bash
+node packages/cli/dist/index.js oauth login --provider codex --account work
+```
+
+List saved accounts:
+
+```bash
+node packages/cli/dist/index.js oauth accounts --provider codex
+```
+
+## 5. Run security review (optional)
+
+```bash
+node packages/cli/dist/index.js --provider openai
+# inside interactive session:
+# /security-review --base=origin/main --exclude=dist,node_modules
+```
+
+## 6. Release readiness check
 
 ```bash
 npm run release:check

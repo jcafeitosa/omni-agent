@@ -65,6 +65,47 @@ function mapMessageToAnthropic(msg: AgentMessage): MessageParam | null {
                         }
                     });
                 }
+            } else if (part.type === "document") {
+                if (part.document.sourceType === "text" && part.document.text) {
+                    blocks.push({
+                        type: "document",
+                        source: {
+                            type: "text",
+                            media_type: part.document.mediaType || "text/plain",
+                            data: part.document.text
+                        },
+                        title: part.document.name
+                    } as any);
+                } else if (part.document.sourceType === "base64" && part.document.data) {
+                    blocks.push({
+                        type: "document",
+                        source: {
+                            type: "base64",
+                            media_type: part.document.mediaType || "application/octet-stream",
+                            data: part.document.data
+                        },
+                        title: part.document.name
+                    } as any);
+                } else if (part.document.sourceType === "url" && part.document.url) {
+                    blocks.push({
+                        type: "text",
+                        text: `[document:${part.document.name || "unnamed"}] ${part.document.url}`
+                    });
+                }
+            } else if (part.type === "citation") {
+                blocks.push({
+                    type: "text",
+                    text: `[citation] ${part.citation.text} (${part.citation.source || "unknown"})`
+                });
+            } else if (part.type === "code_execution") {
+                const language = part.language || "unknown";
+                const code = part.code ? `\n${part.code}` : "";
+                const stdout = part.stdout ? `\nstdout:\n${part.stdout}` : "";
+                const stderr = part.stderr ? `\nstderr:\n${part.stderr}` : "";
+                blocks.push({
+                    type: "text",
+                    text: `[code_execution:${language}]${code}${stdout}${stderr}`
+                });
             }
         }
 
@@ -177,12 +218,45 @@ export class AnthropicProvider implements Provider {
 
         let finalString = "";
         const parsedToolCalls: any[] = [];
+        const contentParts: any[] = [];
 
         for (const block of response.content as any[]) {
             if (block.type === "text") {
                 finalString += block.text;
+                contentParts.push({ type: "text", text: block.text });
+                if (Array.isArray(block.citations)) {
+                    for (const citation of block.citations) {
+                        contentParts.push({
+                            type: "citation",
+                            citation: {
+                                text: String(citation?.title || citation?.snippet || "citation"),
+                                source: String(citation?.url || citation?.title || "unknown"),
+                                startIndex: typeof citation?.start_char_index === "number" ? citation.start_char_index : undefined,
+                                endIndex: typeof citation?.end_char_index === "number" ? citation.end_char_index : undefined
+                            }
+                        });
+                    }
+                }
             } else if (block.type === "thinking" && options?.includeThinkingInText) {
                 finalString += `\n[thinking]\n${block.thinking}`;
+            } else if (block.type === "document") {
+                finalString += `\n[document:${block.title || "unnamed"}]`;
+                contentParts.push({
+                    type: "document",
+                    document: {
+                        sourceType: "text",
+                        text: block.text || "",
+                        name: block.title || "unnamed"
+                    }
+                });
+            } else if (block.type === "code_execution_result") {
+                finalString += `\n[code_execution_result]\n${block.output || ""}`;
+                contentParts.push({
+                    type: "code_execution",
+                    language: block.language || "unknown",
+                    stdout: block.output || "",
+                    exitCode: typeof block.exit_code === "number" ? block.exit_code : undefined
+                });
             } else if (block.type === "tool_use") {
                 parsedToolCalls.push(normalizeToolCall({
                     id: block.id,
@@ -195,12 +269,83 @@ export class AnthropicProvider implements Provider {
         return {
             text: finalString,
             toolCalls: parsedToolCalls,
+            contentParts,
+            requestId: (response as any)?._request_id || (response as any)?.id,
+            provider: this.name,
+            model: this.options.model,
             usage: {
                 inputTokens: response.usage.input_tokens,
                 outputTokens: response.usage.output_tokens,
                 thinkingTokens: (response.usage as any).thinking_tokens || 0
             }
         };
+    }
+
+    public async runToolsNative(
+        messages: AgentMessage[],
+        tools?: ToolDefinition[],
+        options?: AnthropicGenerateOptions
+    ): Promise<ProviderResponse> {
+        const runnerFactory = (this.client as any)?.beta?.messages?.toolRunner;
+        if (typeof runnerFactory !== "function") {
+            return this.generateText(messages, tools, options);
+        }
+
+        const anthropicMessages: MessageParam[] = [];
+        let systemPrompt = "";
+
+        for (const msg of messages) {
+            if (msg.role === "system") {
+                systemPrompt += (msg.text || "") + "\n";
+                continue;
+            }
+            const mapped = mapMessageToAnthropic(msg);
+            if (mapped) anthropicMessages.push(mapped);
+        }
+
+        const anthropicTools: Tool[] = (tools || []).map((t) => ({
+            name: t.name,
+            description: t.description,
+            input_schema: zodToJsonSchema(t.parameters as any) as any
+        }));
+
+        try {
+            const runner = await runnerFactory.call((this.client as any).beta.messages, {
+                model: this.options.model!,
+                max_tokens: options?.maxTokens ?? this.options.maxTokens!,
+                temperature: options?.temperature ?? this.options.temperature,
+                top_p: options?.topP ?? this.options.topP,
+                top_k: options?.topK ?? this.options.topK,
+                stop_sequences: options?.stopSequences ?? this.options.stopSequences,
+                system: options?.system || (systemPrompt.trim() ? systemPrompt.trim() : undefined),
+                messages: anthropicMessages,
+                tools: anthropicTools.length > 0 ? anthropicTools : undefined,
+                tool_choice: options?.toolChoice,
+                metadata: options?.metadata as any,
+                thinking: options?.thinking as any,
+                mcp_servers: options?.mcpServers as any,
+                betas: this.options.betas as any
+            });
+
+            const final = typeof runner?.finalMessage === "function" ? await runner.finalMessage() : undefined;
+            const text = final?.content?.map?.((c: any) => (c?.type === "text" ? c.text : "")).join("") || "";
+            return {
+                text,
+                toolCalls: [],
+                requestId: final?._request_id || final?.id,
+                provider: this.name,
+                model: this.options.model,
+                usage: final?.usage
+                    ? {
+                        inputTokens: final.usage.input_tokens || 0,
+                        outputTokens: final.usage.output_tokens || 0,
+                        thinkingTokens: final.usage.thinking_tokens || 0
+                    }
+                    : undefined
+            };
+        } catch {
+            return this.generateText(messages, tools, options);
+        }
     }
 
     // ========= Anthropic SDK advanced resources =========

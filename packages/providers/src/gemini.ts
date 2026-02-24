@@ -108,6 +108,9 @@ export class GeminiProvider implements Provider {
         return {
             text: finalString,
             toolCalls: parsedToolCalls,
+            requestId: (response as any)?.responseId || (response as any)?.id,
+            provider: this.name,
+            model: this.options.model,
             usage: response.usageMetadata ? {
                 inputTokens: response.usageMetadata.promptTokenCount || 0,
                 outputTokens: response.usageMetadata.candidatesTokenCount || 0,

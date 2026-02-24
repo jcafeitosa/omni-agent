@@ -15,6 +15,12 @@ Compatibilidade de frontmatter com formatos comuns de CLIs de agentes:
 - `tools` aceita lista YAML ou string separada por vírgula
 - nomes de tools em formato TitleCase/CLI (`Read`, `Write`, `Grep`, `Glob`, `LS`, etc.) são mapeados para ferramentas Omni equivalentes
 
+Hierarquia de políticas gerenciadas:
+
+- `managedPolicies` em `AgentManagerOptions` aceita bundles por tier (`builtin`, `workspace`, `user`, `admin`, `enterprise`)
+- precedência determinística por tier com composição em `ManagedPolicyHierarchy`
+- regras e prefix-rules de tiers superiores prevalecem sobre tiers inferiores
+
 ## AgentOrchestrator (`@omni-agent/core`)
 
 `AgentOrchestrator` executa planos de tasks com:
@@ -67,3 +73,12 @@ Campos de task relevantes:
 Quando houver colisão de nome de skill entre plugins, o nome é desambiguado automaticamente com escopo (`nome@plugin`).
 
 `AgentManager` injeta automaticamente o contexto de skills declaradas no frontmatter do agente (`skills: [...]`) no system prompt do agente.
+
+## PluginManager (`@omni-agent/core`)
+
+`PluginManager` suporta distribuição/runtime de plugins com catálogo local:
+
+- `upsertCatalogEntry(entry)` / `removeCatalogEntry(id)` / `listCatalog()`
+- `installFromCatalog(name, version?)` com seleção automática da versão mais recente
+- fontes suportadas no catálogo: `path` e `git` (com `ref` opcional)
+- metadados de instalação persistidos em state (`installedVersion`, `installSource`)
