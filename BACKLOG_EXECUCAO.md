@@ -19,6 +19,8 @@
 - concluido parcial: PROV-002 (embeddings implementados no `BedrockProvider`)
 - concluido parcial: CORE-102 (testes automatizados para normalizacao/provider e seguranca de paths/patterns)
 - concluido: ARCH-301 (mapeamento multi-repo e gap analysis consolidado em `MAPEAMENTO_MULTI_REPOS_FUNCIONALIDADES.md`)
+- concluido parcial: DEVOPS-201 (Release GitHub automatizado com artifacts por tag)
+- pendente: DEVOPS-202 (publicacao em GitHub Packages bloqueada por mismatch de scope `@omni-agent/*` x owner `jcafeitosa`)
 
 ## P0 (bloqueante de sistema)
 
@@ -48,6 +50,8 @@
 - MCP-201: discovery de MCP resources/prompts alem de tools
 - AGENT-201: subagents remotos (A2A) com governanca de permissoes
 - PLUGIN-201: runtime de plugins/skills com manifesto e distribuicao
+- DEVOPS-201: pipeline de release/publicacao com estrategia de versionamento automatizada
+- DEVOPS-202: estrategia de distribuicao de pacotes (scope/owner para GitHub Packages ou npmjs)
 
 ## P2 (otimizacao)
 

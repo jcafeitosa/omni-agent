@@ -29,6 +29,7 @@ Objetivo: concluir a base de sistema completo do Omni Agent com foco em confiabi
 - maturar retrieval/indexacao com metadados e invalidez
 - fortalecer webmcp para multi-cliente
 - fechar baseline de observabilidade e readiness de release
+- fechar estrategia de distribuicao de pacotes (npmjs e/ou GitHub Packages com alinhamento de scope)
 
 ## Sprints
 
@@ -77,6 +78,7 @@ Objetivo: concluir a base de sistema completo do Omni Agent com foco em confiabi
 - P1: webmcp multi-cliente com testes de concorrencia basicos
 - P1: checklist de release com gates de qualidade
 - P1: MCP-201 (resources/prompts no bridge MCP)
+- P1: DEVOPS-202 (resolver publish em GitHub Packages: alinhar scope/owner ou manter publicacao oficial via npmjs)
 - entrega: baseline de sistema completo pronto para ciclos continuos
 
 ## Gates de qualidade (obrigatorios por sprint)
