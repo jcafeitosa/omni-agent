@@ -49,7 +49,7 @@
 - concluido: POL-001 (permission suggestions em respostas de deny para integracao com UI/CLI)
 - concluido: MCP-201 (gerenciamento de MCP servers via status/toggle/reconnect no runtime de tools)
 - concluido: ROUTE-001 (roteamento effort-aware com capacidades `supportsEffort`/`supportsAdaptiveThinking`)
-- concluido: AUTH-201 (multi-sessao OAuth por vendor com balanceamento de contas e selecao por estrategia)
+- concluido: AUTH-201 (multi-sessao OAuth por vendor com balanceamento de contas, estrategias e consciencia de rate limit por conta)
 
 ## P0 (bloqueante de sistema)
 

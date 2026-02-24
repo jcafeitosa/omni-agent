@@ -13,6 +13,13 @@ export interface OAuthCredentials {
     metadata?: Record<string, unknown>;
 }
 
+export interface OAuthRateLimitInfo {
+    remaining?: number;
+    limit?: number;
+    retryAfterMs?: number;
+    resetAt?: number;
+}
+
 export interface OAuthClientIdentity {
     cliName: string;
     userAgent?: string;

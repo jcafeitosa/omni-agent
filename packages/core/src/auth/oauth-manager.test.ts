@@ -62,3 +62,24 @@ test("oauth manager supports parallel strategy with in-flight balancing", async 
     l2?.release();
 });
 
+test("all account selection strategies avoid rate-limited accounts when alternatives exist", async () => {
+    const strategies: Array<"single" | "round_robin" | "least_recent" | "parallel" | "random"> = [
+        "single",
+        "round_robin",
+        "least_recent",
+        "parallel",
+        "random"
+    ];
+
+    for (const strategy of strategies) {
+        const manager = new OAuthManager({ store: new InMemoryStore() });
+        manager.registerProfile(profile);
+        await manager.saveAccountCredentials("codex", "limited", { accessToken: "token-limited" });
+        await manager.saveAccountCredentials("codex", "healthy", { accessToken: "token-healthy" });
+        await manager.reportRateLimit("codex", "limited", { retryAfterMs: 60_000, remaining: 0 });
+
+        const lease = await manager.acquireAccessToken("codex", { strategy });
+        assert.equal(lease?.accountId, "healthy");
+        lease?.release();
+    }
+});

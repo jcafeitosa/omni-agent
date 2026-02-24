@@ -5,7 +5,8 @@ import {
     OAuthRefreshFn,
     OAuthAccountSelectionStrategy,
     OAuthAccountTokenLease,
-    OAuthTokenAcquireOptions
+    OAuthTokenAcquireOptions,
+    OAuthRateLimitInfo
 } from "./types.js";
 import { createOAuthCredentialStore } from "./credential-store.js";
 import {
@@ -198,6 +199,28 @@ export class OAuthManager {
         };
     }
 
+    public async reportRateLimit(providerId: string, accountId: string, info: OAuthRateLimitInfo): Promise<void> {
+        const credentials = await this.loadAccountCredentials(providerId, accountId);
+        if (!credentials) return;
+
+        const resetAt = resolveResetAt(info);
+        const current = toRateLimitMetadata(credentials.metadata);
+        const next = {
+            remaining: info.remaining ?? current.remaining,
+            limit: info.limit ?? current.limit,
+            resetAt: resetAt ?? current.resetAt,
+            updatedAt: Date.now()
+        };
+
+        await this.saveAccountCredentials(providerId, accountId, {
+            ...credentials,
+            metadata: {
+                ...(credentials.metadata || {}),
+                oauthRateLimit: next
+            }
+        });
+    }
+
     public buildAuthHeaders(providerId: string, accessToken: string): Record<string, string> {
         const profile = this.profiles.get(providerId);
         if (!profile) {
@@ -289,46 +312,56 @@ export class OAuthManager {
         strategy: OAuthAccountSelectionStrategy
     ): Promise<string | null> {
         if (accountIds.length === 0) return null;
-        if (accountIds.length === 1 || strategy === "single") return accountIds[0];
+        if (accountIds.length === 1) return accountIds[0];
+
+        const accountStates = await Promise.all(
+            accountIds.map(async (accountId) => {
+                const credentials = await this.loadAccountCredentials(providerId, accountId);
+                const rate = toRateLimitMetadata(credentials?.metadata);
+                const now = Date.now();
+                const isLimited = Boolean(rate.resetAt && rate.resetAt > now) || (rate.remaining !== undefined && rate.remaining <= 0);
+                const resetAt = rate.resetAt || 0;
+                const ts = credentials?.lastUsedAt || credentials?.updatedAt || 0;
+                const inFlight = this.inFlightCounts.get(providerId)?.get(accountId) || 0;
+                return { accountId, ts, inFlight, isLimited, resetAt };
+            })
+        );
+
+        const available = accountStates.filter((s) => !s.isLimited);
+        const pool = available.length > 0 ? available : accountStates;
+        if (pool.length === 0) return null;
+
+        if (available.length === 0) {
+            // all accounts are rate limited; pick the one with closest reset to recover fastest
+            return [...pool].sort((a, b) => a.resetAt - b.resetAt)[0].accountId;
+        }
+
+        if (strategy === "single") {
+            return pool[0].accountId;
+        }
 
         if (strategy === "round_robin") {
             const idx = this.roundRobinState.get(providerId) || 0;
-            const next = accountIds[idx % accountIds.length];
-            this.roundRobinState.set(providerId, (idx + 1) % accountIds.length);
+            const next = pool[idx % pool.length].accountId;
+            this.roundRobinState.set(providerId, (idx + 1) % pool.length);
             return next;
         }
 
         if (strategy === "least_recent") {
-            let best: { id: string; ts: number } | null = null;
-            for (const accountId of accountIds) {
-                const credentials = await this.loadAccountCredentials(providerId, accountId);
-                const ts = credentials?.lastUsedAt || credentials?.updatedAt || 0;
-                if (!best || ts < best.ts) {
-                    best = { id: accountId, ts };
-                }
-            }
-            return best?.id || accountIds[0];
+            return [...pool].sort((a, b) => a.ts - b.ts)[0].accountId;
         }
 
         if (strategy === "parallel") {
-            const inFlight = this.inFlightCounts.get(providerId) || new Map<string, number>();
-            let best: { id: string; load: number; ts: number } | null = null;
-            for (const accountId of accountIds) {
-                const credentials = await this.loadAccountCredentials(providerId, accountId);
-                const ts = credentials?.lastUsedAt || credentials?.updatedAt || 0;
-                const load = inFlight.get(accountId) || 0;
-                if (!best || load < best.load || (load === best.load && ts < best.ts)) {
-                    best = { id: accountId, load, ts };
-                }
-            }
-            return best?.id || accountIds[0];
+            return [...pool]
+                .sort((a, b) => a.inFlight - b.inFlight || a.ts - b.ts)[0]
+                .accountId;
         }
 
         if (strategy === "random") {
-            return accountIds[Math.floor(Math.random() * accountIds.length)];
+            return pool[Math.floor(Math.random() * pool.length)].accountId;
         }
 
-        return accountIds[0];
+        return pool[0].accountId;
     }
 
     private trackAccount(providerId: string, accountId: string): void {
@@ -388,6 +421,24 @@ export class OAuthManager {
             }
         };
     }
+}
+
+function toRateLimitMetadata(metadata?: Record<string, unknown>): {
+    remaining?: number;
+    limit?: number;
+    resetAt?: number;
+} {
+    const raw = (metadata?.oauthRateLimit || {}) as Record<string, unknown>;
+    const remaining = typeof raw.remaining === "number" ? raw.remaining : undefined;
+    const limit = typeof raw.limit === "number" ? raw.limit : undefined;
+    const resetAt = typeof raw.resetAt === "number" ? raw.resetAt : undefined;
+    return { remaining, limit, resetAt };
+}
+
+function resolveResetAt(info: OAuthRateLimitInfo): number | undefined {
+    if (typeof info.resetAt === "number") return info.resetAt;
+    if (typeof info.retryAfterMs === "number") return Date.now() + info.retryAfterMs;
+    return undefined;
 }
 
 function toAccountStorageKey(providerId: string, accountId: string): string {

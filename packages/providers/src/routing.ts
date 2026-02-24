@@ -87,8 +87,11 @@ export class ModelRouter {
                 continue;
             }
 
+            let resolved:
+                | { options: any; lease?: { release(): void }; oauthProfileId?: string; oauthAccountId?: string }
+                | undefined;
             try {
-                const resolved = await this.resolveProviderOptions(providerName, request, model);
+                resolved = await this.resolveProviderOptions(providerName, request, model);
                 try {
                     const provider = this.registry.create(providerName, resolved.options);
                     const response = await provider.generateText(messages, request.tools, request.generateOptions);
@@ -104,6 +107,29 @@ export class ModelRouter {
                     resolved.lease?.release();
                 }
             } catch (error) {
+                const rateLimit = extractRateLimitInfo(error);
+                if (
+                    rateLimit.limited &&
+                    this.oauthManager
+                ) {
+                    const profileId =
+                        resolved?.oauthProfileId ||
+                        this.oauthProfileByProvider?.[providerName] ||
+                        defaultOAuthProfileId(providerName);
+                    const accountId = resolved?.oauthAccountId || request.oauthAccountId;
+                    if (accountId && profileId) {
+                        try {
+                            await this.oauthManager.reportRateLimit(profileId, accountId, {
+                                retryAfterMs: rateLimit.retryAfterMs,
+                                remaining: rateLimit.remaining,
+                                limit: rateLimit.limit,
+                                resetAt: rateLimit.resetAt
+                            });
+                        } catch {
+                            // ignore telemetry/reporting failures
+                        }
+                    }
+                }
                 const message = error instanceof Error ? error.message : String(error);
                 this.modelManager.markModelFailure(
                     providerName,
@@ -123,7 +149,7 @@ export class ModelRouter {
         provider: string,
         request: GenerateWithFallbackRequest,
         model?: string
-    ): Promise<{ options: any; lease?: { release(): void } }> {
+    ): Promise<{ options: any; lease?: { release(): void }; oauthProfileId?: string; oauthAccountId?: string }> {
         const merged: Record<string, any> = {
             ...this.baseOptions?.[provider],
             ...request.providerOptions?.[provider]
@@ -161,7 +187,9 @@ export class ModelRouter {
                 },
                 oauthProfileId
             },
-            lease
+            lease,
+            oauthProfileId,
+            oauthAccountId: lease.accountId
         };
     }
 
@@ -401,5 +429,60 @@ function defaultOAuthProfileId(provider: string): string | undefined {
     if (provider === "gemini") return "gemini-cli";
     if (provider === "cursor") return "cursor";
     if (provider === "openai" || provider === "codex") return "codex";
+    return undefined;
+}
+
+function extractRateLimitInfo(error: unknown): {
+    limited: boolean;
+    retryAfterMs?: number;
+    remaining?: number;
+    limit?: number;
+    resetAt?: number;
+} {
+    const err = error as any;
+    const status = Number(err?.status || err?.statusCode || err?.response?.status || 0);
+    const message = String(err?.message || err || "").toLowerCase();
+    const limitedByStatus = status === 429;
+    const limitedByMessage = /rate[\s_-]*limit|too many requests|quota exceeded/.test(message);
+    const limited = limitedByStatus || limitedByMessage;
+
+    const headers = err?.headers || err?.response?.headers || {};
+    const retryAfterRaw =
+        headers["retry-after"] ||
+        headers["Retry-After"] ||
+        err?.retryAfter ||
+        err?.retryAfterSeconds;
+    const remainingRaw = headers["x-ratelimit-remaining"] || headers["X-RateLimit-Remaining"] || err?.rateLimitRemaining;
+    const limitRaw = headers["x-ratelimit-limit"] || headers["X-RateLimit-Limit"] || err?.rateLimitLimit;
+    const resetRaw = headers["x-ratelimit-reset"] || headers["X-RateLimit-Reset"] || err?.rateLimitReset;
+
+    const retryAfterMs =
+        typeof retryAfterRaw === "number"
+            ? retryAfterRaw > 1000 ? retryAfterRaw : retryAfterRaw * 1000
+            : typeof retryAfterRaw === "string"
+                ? Number(retryAfterRaw) * 1000 || undefined
+                : undefined;
+    const remaining = toOptionalNumber(remainingRaw);
+    const limit = toOptionalNumber(limitRaw);
+    const resetAt =
+        typeof resetRaw === "number"
+            ? resetRaw > 10_000_000_000 ? resetRaw : resetRaw * 1000
+            : typeof resetRaw === "string"
+                ? (() => {
+                    const n = Number(resetRaw);
+                    if (!Number.isFinite(n)) return undefined;
+                    return n > 10_000_000_000 ? n : n * 1000;
+                })()
+                : undefined;
+
+    return { limited, retryAfterMs, remaining, limit, resetAt };
+}
+
+function toOptionalNumber(value: unknown): number | undefined {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string") {
+        const n = Number(value);
+        if (Number.isFinite(n)) return n;
+    }
     return undefined;
 }

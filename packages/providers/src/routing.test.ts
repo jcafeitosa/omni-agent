@@ -237,3 +237,60 @@ test("router balances oauth accounts for same provider", async () => {
 
     assert.deepEqual(usedKeys, ["tok-A", "tok-B"]);
 });
+
+test("router reports oauth account rate limit and avoids limited account", async () => {
+    const profile: OAuthProviderProfile = {
+        id: "codex",
+        displayName: "Codex",
+        authorizeUrl: "https://example.com/auth",
+        tokenUrl: "https://example.com/token",
+        clientId: "client",
+        scopes: ["openid"],
+        redirectUri: "http://localhost/callback",
+        authFlow: "pkce",
+        identity: { cliName: "codex" }
+    };
+    const oauth = new OAuthManager({ store: new InMemoryOAuthStore() });
+    oauth.registerProfile(profile);
+    await oauth.saveAccountCredentials("codex", "a1", { accessToken: "tok-A" });
+    await oauth.saveAccountCredentials("codex", "a2", { accessToken: "tok-B" });
+
+    const usedKeys: string[] = [];
+    const registry = new ProviderRegistry();
+    registry.register({
+        name: "openai",
+        modelPatterns: [/^gpt-/i],
+        create: (opts?: any) =>
+            new MockProvider("openai", opts?.model || "gpt-4o", []).withGenerate(async () => {
+                usedKeys.push(String(opts?.apiKey || ""));
+                if (String(opts?.apiKey || "") === "tok-A") {
+                    const err: any = new Error("rate limit exceeded");
+                    err.status = 429;
+                    err.headers = { "retry-after": "60", "x-ratelimit-remaining": "0" };
+                    throw err;
+                }
+                return { text: "ok", toolCalls: [] };
+            })
+    } as any);
+
+    const manager = new ProviderModelManager({ registry, defaultCooldownMs: 10_000 });
+    manager.availability.upsertModels("openai", ["gpt-4o"], "configured");
+    const router = new ModelRouter({
+        registry,
+        modelManager: manager,
+        oauthManager: oauth,
+        oauthProfileByProvider: { openai: "codex" },
+        oauthStrategy: "round_robin"
+    });
+
+    await assert.rejects(() =>
+        router.generateText([], { provider: "openai", allowProviderFallback: false, refreshBeforeRoute: false })
+    );
+    const second = await router.generateText([], {
+        provider: "openai",
+        allowProviderFallback: false,
+        refreshBeforeRoute: false
+    });
+    assert.equal(second.provider, "openai");
+    assert.equal(usedKeys.includes("tok-B"), true);
+});

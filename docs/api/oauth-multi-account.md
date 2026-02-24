@@ -19,6 +19,20 @@
 - `parallel`: prioriza contas com menor carga em uso simultaneo
 - `random`: escolha aleatoria
 
+Todas as estrategias filtram contas com rate limit ativo quando houver alternativa disponivel.  
+Se todas estiverem limitadas, o sistema escolhe a conta com menor `resetAt` previsto.
+
+## Rate limits de conta
+
+`OAuthManager.reportRateLimit(providerId, accountId, info)` permite registrar:
+
+- `remaining`
+- `limit`
+- `retryAfterMs`
+- `resetAt`
+
+O roteador usa essa telemetria para evitar contas limitadas automaticamente.
+
 ## Integracao com roteamento de modelos
 
 `ModelRouter` aceita:
