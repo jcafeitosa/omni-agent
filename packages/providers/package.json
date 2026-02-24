@@ -14,7 +14,7 @@
     "@anthropic-ai/sdk": "^0.36.0",
     "@aws-sdk/client-bedrock-runtime": "^3.744.0",
     "@omni-agent/core": "*",
-    "openai": "^4.85.0",
+    "openai": "^6.25.0",
     "zod": "^3.24.2",
     "zod-to-json-schema": "^3.24.1"
   },
