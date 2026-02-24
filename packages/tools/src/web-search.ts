@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { ToolDefinition } from "@omni-agent/core";
-import { GoogleGenAI } from "@google/genai";
 
 export const webSearchTool = (options?: { apiKey?: string; }): ToolDefinition => ({
     name: "web_search",
@@ -14,19 +13,31 @@ export const webSearchTool = (options?: { apiKey?: string; }): ToolDefinition =>
             if (!apiKey) {
                 return "Error: GEMINI_API_KEY is required to use web search.";
             }
+            const baseUrl = (process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta").replace(/\/$/, "");
+            const url = new URL(`${baseUrl}/models/gemini-2.5-flash:generateContent`);
+            url.searchParams.set("key", apiKey);
 
-            const client = new GoogleGenAI({ apiKey });
-
-            const response = await client.models.generateContent({
-                model: "gemini-2.5-flash",
-                contents: [{ role: "user", parts: [{ text: `Search the web for: ${query}` }] }],
-                config: {
-                    tools: [{ googleSearch: {} }] // Enable Grounding with Google Search
-                }
+            const response = await fetch(url, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    contents: [{ role: "user", parts: [{ text: `Search the web for: ${query}` }] }],
+                    tools: [{ googleSearch: {} }]
+                })
             });
 
-            const text = response.text || "No response received.";
-            const groundingMetadata = (response.candidates?.[0] as any)?.groundingMetadata;
+            const payload = (await response.json()) as any;
+            if (!response.ok) {
+                const message = payload?.error?.message || `Gemini web search request failed (${response.status})`;
+                return `Error searching the web: ${message}`;
+            }
+
+            const text =
+                payload?.candidates?.[0]?.content?.parts
+                    ?.map((p: any) => p?.text || "")
+                    .filter(Boolean)
+                    .join("") || "No response received.";
+            const groundingMetadata = payload?.candidates?.[0]?.groundingMetadata;
 
             let finalResponse = text;
             if (groundingMetadata?.groundingChunks) {

@@ -1,10 +1,9 @@
-import { GoogleGenAI, Type } from "@google/genai";
-import { Provider, ProviderResponse, AgentMessage, ToolDefinition } from "@omni-agent/core";
 import { GeminiProvider, GeminiProviderOptions } from "./gemini.js";
 
 export interface VertexProviderOptions extends GeminiProviderOptions {
     project?: string;
     location?: string;
+    baseUrl?: string;
 }
 
 export class VertexProvider extends GeminiProvider {
@@ -12,6 +11,7 @@ export class VertexProvider extends GeminiProvider {
         const project = options.project || process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT;
         const location = options.location || process.env.GOOGLE_CLOUD_LOCATION;
 
+        // Keep project/location contract explicit for Vertex usage flows.
         if (!project || !location) {
             throw new Error("Vertex AI requires GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION environment variables.");
         }
@@ -19,16 +19,9 @@ export class VertexProvider extends GeminiProvider {
         super({
             model: "gemini-2.5-flash",
             ...options,
+            baseUrl: options.baseUrl || process.env.VERTEX_API_BASE_URL || process.env.GEMINI_BASE_URL
         });
 
         this.name = "vertex";
-
-        // Override the client for Vertex AI specifically
-        // @ts-ignore - bypassing private modifier in GeminiProvider for simplicity
-        this.client = new GoogleGenAI({
-            vertexai: true,
-            project,
-            location
-        });
     }
 }
