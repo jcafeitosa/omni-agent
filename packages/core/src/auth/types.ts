@@ -2,10 +2,14 @@ export type OAuthCredentialsStoreMode = "auto" | "file" | "keyring";
 
 export interface OAuthCredentials {
     accessToken: string;
+    accountId?: string;
+    accountLabel?: string;
     refreshToken?: string;
     expiresAt?: number;
     tokenType?: string;
     scopes?: string[];
+    updatedAt?: number;
+    lastUsedAt?: number;
     metadata?: Record<string, unknown>;
 }
 
@@ -53,3 +57,17 @@ export type OAuthRefreshFn = (
     credentials: OAuthCredentials,
     context: OAuthRefreshContext
 ) => Promise<OAuthCredentials>;
+
+export type OAuthAccountSelectionStrategy = "single" | "round_robin" | "least_recent" | "parallel" | "random";
+
+export interface OAuthTokenAcquireOptions {
+    accountId?: string;
+    strategy?: OAuthAccountSelectionStrategy;
+}
+
+export interface OAuthAccountTokenLease {
+    providerId: string;
+    accountId: string;
+    accessToken: string;
+    release(): void;
+}

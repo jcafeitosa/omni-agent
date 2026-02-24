@@ -3,6 +3,7 @@ import React from 'react';
 import { App } from './ui/App.js';
 import {
     createDefaultProviderRegistry,
+    createDefaultOAuthManager,
     ModelRouter,
     ProviderModelManager,
     RoutedProvider
@@ -43,12 +44,24 @@ async function main() {
             description: 'Comma-separated provider fallback order (e.g. "openai,ollama")',
             default: ''
         })
+        .option('oauth-account', {
+            type: 'string',
+            description: 'OAuth account id to force for OAuth-enabled providers'
+        })
+        .option('oauth-strategy', {
+            type: 'string',
+            choices: ['single', 'round_robin', 'least_recent', 'parallel', 'random'] as const,
+            description: 'OAuth multi-account balancing strategy',
+            default: 'round_robin'
+        })
         .help()
         .parse();
 
     const primaryProvider = String(argv.provider);
     const primaryModel = argv.model ? String(argv.model) : undefined;
     const defaultModel = argv['default-model'] ? String(argv['default-model']) : undefined;
+    const oauthAccountId = argv['oauth-account'] ? String(argv['oauth-account']) : undefined;
+    const oauthStrategy = String(argv['oauth-strategy'] || 'round_robin') as any;
     const fallbackProviders = String(argv['fallback-providers'] || '')
         .split(',')
         .map((p) => p.trim())
@@ -65,6 +78,7 @@ async function main() {
     };
 
     const registry = createDefaultProviderRegistry();
+    const oauthManager = createDefaultOAuthManager();
     if (!registry.has(primaryProvider)) {
         throw new Error(`Unknown provider: ${primaryProvider}`);
     }
@@ -77,7 +91,9 @@ async function main() {
         registry,
         modelManager,
         optionsByProvider,
-        defaultCooldownMs: 120_000
+        defaultCooldownMs: 120_000,
+        oauthManager,
+        oauthStrategy
     });
 
     const baseProvider = registry.create(primaryProvider, optionsByProvider[primaryProvider]);
@@ -92,7 +108,9 @@ async function main() {
             preferOAuthModels: true,
             providerPriority: [primaryProvider, ...fallbackProviders],
             allowProviderFallback: true,
-            refreshBeforeRoute: true
+            refreshBeforeRoute: true,
+            oauthAccountId,
+            oauthStrategy
         }
     });
 

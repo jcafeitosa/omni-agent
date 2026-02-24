@@ -1,4 +1,4 @@
-import { AgentMessage, ProviderResponse, ToolDefinition, ProviderRegistry } from "@omni-agent/core";
+import { AgentMessage, OAuthAccountSelectionStrategy, OAuthManager, ProviderResponse, ToolDefinition, ProviderRegistry } from "@omni-agent/core";
 import { ProviderModelManager } from "./model-manager.js";
 import { resolveModelLimits } from "./utils/model-limits.js";
 
@@ -20,6 +20,9 @@ export interface ModelRouterOptions {
     modelManager: ProviderModelManager;
     optionsByProvider?: Partial<Record<string, any>>;
     defaultCooldownMs?: number;
+    oauthManager?: OAuthManager;
+    oauthProfileByProvider?: Partial<Record<string, string>>;
+    oauthStrategy?: OAuthAccountSelectionStrategy;
 }
 
 export interface GenerateWithFallbackRequest {
@@ -34,6 +37,8 @@ export interface GenerateWithFallbackRequest {
     preferOAuthModels?: boolean;
     refreshBeforeRoute?: boolean;
     cooldownMsOnFailure?: number;
+    oauthAccountId?: string;
+    oauthStrategy?: OAuthAccountSelectionStrategy;
     generateOptions?: any;
 }
 
@@ -44,12 +49,18 @@ export class ModelRouter {
     private readonly modelManager: ProviderModelManager;
     private readonly baseOptions?: Partial<Record<string, any>>;
     private readonly defaultCooldownMs: number;
+    private readonly oauthManager?: OAuthManager;
+    private readonly oauthProfileByProvider?: Partial<Record<string, string>>;
+    private readonly oauthStrategy: OAuthAccountSelectionStrategy;
 
     constructor(options: ModelRouterOptions) {
         this.registry = options.registry;
         this.modelManager = options.modelManager;
         this.baseOptions = options.optionsByProvider;
         this.defaultCooldownMs = options.defaultCooldownMs ?? 60_000;
+        this.oauthManager = options.oauthManager;
+        this.oauthProfileByProvider = options.oauthProfileByProvider;
+        this.oauthStrategy = options.oauthStrategy || "round_robin";
     }
 
     public async generateText(messages: AgentMessage[], request: GenerateWithFallbackRequest = {}): Promise<RouteResult> {
@@ -77,16 +88,21 @@ export class ModelRouter {
             }
 
             try {
-                const provider = this.registry.create(providerName, this.resolveProviderOptions(providerName, request, model));
-                const response = await provider.generateText(messages, request.tools, request.generateOptions);
-                this.modelManager.availability.clearCooldown(providerName, model);
-                attempts.push({ provider: providerName, model });
-                return {
-                    provider: providerName,
-                    model,
-                    response,
-                    attempts
-                };
+                const resolved = await this.resolveProviderOptions(providerName, request, model);
+                try {
+                    const provider = this.registry.create(providerName, resolved.options);
+                    const response = await provider.generateText(messages, request.tools, request.generateOptions);
+                    this.modelManager.availability.clearCooldown(providerName, model);
+                    attempts.push({ provider: providerName, model });
+                    return {
+                        provider: providerName,
+                        model,
+                        response,
+                        attempts
+                    };
+                } finally {
+                    resolved.lease?.release();
+                }
             } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
                 this.modelManager.markModelFailure(
@@ -103,7 +119,11 @@ export class ModelRouter {
         throw new Error(`All routing attempts failed. ${summary}`);
     }
 
-    private resolveProviderOptions(provider: string, request: GenerateWithFallbackRequest, model?: string): any {
+    private async resolveProviderOptions(
+        provider: string,
+        request: GenerateWithFallbackRequest,
+        model?: string
+    ): Promise<{ options: any; lease?: { release(): void } }> {
         const merged: Record<string, any> = {
             ...this.baseOptions?.[provider],
             ...request.providerOptions?.[provider]
@@ -111,7 +131,38 @@ export class ModelRouter {
         if (model) {
             merged.model = model;
         }
-        return merged;
+
+        const oauthProfileId = merged.oauthProfileId || this.oauthProfileByProvider?.[provider] || defaultOAuthProfileId(provider);
+        if (!this.oauthManager || !oauthProfileId) {
+            return { options: merged };
+        }
+        if (merged.apiKey || merged.token || merged.accessToken) {
+            return { options: merged };
+        }
+
+        const lease = await this.oauthManager.acquireAccessToken(oauthProfileId, {
+            accountId: request.oauthAccountId,
+            strategy: request.oauthStrategy || this.oauthStrategy
+        });
+        if (!lease) {
+            return { options: merged };
+        }
+
+        const headers = this.oauthManager.buildAuthHeaders(oauthProfileId, lease.accessToken);
+        return {
+            options: {
+                ...merged,
+                apiKey: lease.accessToken,
+                token: lease.accessToken,
+                accessToken: lease.accessToken,
+                defaultHeaders: {
+                    ...(merged.defaultHeaders || {}),
+                    ...headers
+                },
+                oauthProfileId
+            },
+            lease
+        };
     }
 
     private preferredModelForProvider(provider: string, request: GenerateWithFallbackRequest): string | undefined {
@@ -158,11 +209,19 @@ export class ModelRouter {
 
     private inferConfiguredModel(provider: string, request: GenerateWithFallbackRequest): string | undefined {
         try {
-            const instance = this.registry.create(provider, this.resolveProviderOptions(provider, request));
+            const instance = this.registry.create(provider, this.resolveBaseProviderOptions(provider, request));
+            
             return instance.getModelLimits().model;
         } catch {
             return undefined;
         }
+    }
+
+    private resolveBaseProviderOptions(provider: string, request: GenerateWithFallbackRequest): any {
+        return {
+            ...this.baseOptions?.[provider],
+            ...request.providerOptions?.[provider]
+        };
     }
 
     private resolveProviders(request: GenerateWithFallbackRequest): string[] {
@@ -334,5 +393,13 @@ function normalizeEffortLevel(value: unknown): EffortLevel | undefined {
             return normalizeEffortLevel(level);
         }
     }
+    return undefined;
+}
+
+function defaultOAuthProfileId(provider: string): string | undefined {
+    if (provider === "anthropic") return "claude-code";
+    if (provider === "gemini") return "gemini-cli";
+    if (provider === "cursor") return "cursor";
+    if (provider === "openai" || provider === "codex") return "codex";
     return undefined;
 }

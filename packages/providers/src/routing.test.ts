@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { AgentMessage, Provider, ProviderRegistry, ToolDefinition } from "@omni-agent/core";
+import { AgentMessage, OAuthCredentialStore, OAuthCredentials, OAuthManager, OAuthProviderProfile, Provider, ProviderRegistry, ToolDefinition } from "@omni-agent/core";
 import { ProviderModelManager } from "./model-manager.js";
 import { ModelRouter } from "./routing.js";
 
@@ -8,6 +8,7 @@ class MockProvider implements Provider {
     public name: string;
     private readonly model: string;
     private readonly failModels: Set<string>;
+    private customGenerate?: (messages: AgentMessage[], tools?: ToolDefinition[]) => Promise<any>;
 
     constructor(name: string, model: string, failModels: string[] = []) {
         this.name = name;
@@ -16,6 +17,9 @@ class MockProvider implements Provider {
     }
 
     async generateText(_messages: AgentMessage[], _tools?: ToolDefinition[]): Promise<any> {
+        if (this.customGenerate) {
+            return this.customGenerate(_messages, _tools);
+        }
         if (this.failModels.has(this.model)) {
             throw new Error(`forced failure for ${this.name}/${this.model}`);
         }
@@ -39,6 +43,27 @@ class MockProvider implements Provider {
             maxInputTokens: null,
             source: "configured"
         };
+    }
+
+    withGenerate(fn: (messages: AgentMessage[], tools?: ToolDefinition[]) => Promise<any>): this {
+        this.customGenerate = fn;
+        return this;
+    }
+}
+
+class InMemoryOAuthStore implements OAuthCredentialStore {
+    private data = new Map<string, OAuthCredentials>();
+    async load(providerId: string): Promise<OAuthCredentials | null> {
+        return this.data.get(providerId) || null;
+    }
+    async save(providerId: string, credentials: OAuthCredentials): Promise<void> {
+        this.data.set(providerId, credentials);
+    }
+    async delete(providerId: string): Promise<boolean> {
+        return this.data.delete(providerId);
+    }
+    async listProviderIds(): Promise<string[]> {
+        return Array.from(this.data.keys());
     }
 }
 
@@ -166,4 +191,49 @@ test("router prefers models that support requested effort capabilities", async (
     });
 
     assert.equal(result.model, "claude-3-5-sonnet-20241022");
+});
+
+test("router balances oauth accounts for same provider", async () => {
+    const profile: OAuthProviderProfile = {
+        id: "codex",
+        displayName: "Codex",
+        authorizeUrl: "https://example.com/auth",
+        tokenUrl: "https://example.com/token",
+        clientId: "client",
+        scopes: ["openid"],
+        redirectUri: "http://localhost/callback",
+        authFlow: "pkce",
+        identity: { cliName: "codex" }
+    };
+    const oauth = new OAuthManager({ store: new InMemoryOAuthStore() });
+    oauth.registerProfile(profile);
+    await oauth.saveAccountCredentials("codex", "a1", { accessToken: "tok-A" });
+    await oauth.saveAccountCredentials("codex", "a2", { accessToken: "tok-B" });
+
+    const usedKeys: string[] = [];
+    const registry = new ProviderRegistry();
+    registry.register({
+        name: "openai",
+        modelPatterns: [/^gpt-/i],
+        create: (opts?: any) =>
+            new MockProvider("openai", opts?.model || "gpt-4o", []).withGenerate(async () => {
+                usedKeys.push(String(opts?.apiKey || ""));
+                return { text: "ok", toolCalls: [] };
+            })
+    } as any);
+
+    const manager = new ProviderModelManager({ registry, defaultCooldownMs: 10_000 });
+    manager.availability.upsertModels("openai", ["gpt-4o"], "configured");
+    const router = new ModelRouter({
+        registry,
+        modelManager: manager,
+        oauthManager: oauth,
+        oauthProfileByProvider: { openai: "codex" },
+        oauthStrategy: "round_robin"
+    });
+
+    await router.generateText([], { provider: "openai", allowProviderFallback: false, refreshBeforeRoute: false });
+    await router.generateText([], { provider: "openai", allowProviderFallback: false, refreshBeforeRoute: false });
+
+    assert.deepEqual(usedKeys, ["tok-A", "tok-B"]);
 });

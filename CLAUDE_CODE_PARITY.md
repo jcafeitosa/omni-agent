@@ -75,6 +75,7 @@ Data source: local analysis of `../claude-code` (README, plugins docs, CHANGELOG
 - `DONE` PKCE/authorization_code/device_code login flows
 - `DONE` Token refresh and header construction
 - `DONE` CLI identity profiles (`codex`, `claude-code`, `cursor`, `gemini-cli`)
+- `DONE` Multi-account OAuth sessions per provider with balancing (`single`, `round_robin`, `least_recent`, `parallel`, `random`)
 - `PARTIAL` Provider-specific interactive login UX (browser helpers/CLI command set) pending
 
 ## MCP and Plugins
