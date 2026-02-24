@@ -14,7 +14,7 @@ Status de compatibilidade funcional no `omni-agent`.
 |---|---|---|---|---|---|
 | AnthropicProvider | sim | sim | nao | nao | sim | depende de API key `ANTHROPIC_API_KEY` |
 | OpenAIProvider | sim | sim | sim | sim | sim | default embedding model `text-embedding-3-small` |
-| GeminiProvider | sim | sim | sim | sim | sim | usa `@google/genai`; functionResponse usa `toolName` |
+| GeminiProvider | sim | sim | sim | sim | sim | usa Gemini REST API direta; functionResponse usa `toolName` |
 | BedrockProvider | sim | sim | sim | sim | sim | embeddings via `InvokeModel` (Titan default) |
 | AzureOpenAIProvider | sim | sim | parcial | parcial | sim | herda OpenAI; requer deployment/modelo de embedding valido |
 | VertexProvider | sim | sim | sim | sim | sim | herda Gemini em modo Vertex |
