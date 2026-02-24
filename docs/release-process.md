@@ -33,6 +33,27 @@ git push origin v0.1.0
 - `NPM_TOKEN`: required to publish to `registry.npmjs.org`
 - `GITHUB_TOKEN`: built-in, used by workflow for GitHub Packages
 
+## npm configuration
+
+Repository root includes `.npmrc` with:
+
+- npmjs as default registry
+- auth token from `NPM_TOKEN`
+- GitHub Packages token from `GITHUB_TOKEN`
+
+For local publishing, export token before running publish scripts:
+
+```bash
+export NPM_TOKEN=...
+npm run release:publish:npm
+```
+
+If local npm cache has permission issues, use a workspace-local cache:
+
+```bash
+NPM_CONFIG_CACHE=.npm-cache npm run release:publish:npm
+```
+
 ## GitHub Packages scope requirement
 
 For npm packages on GitHub Packages, the package scope must match the repository owner (`@<owner>/<name>`).
