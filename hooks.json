@@ -1,0 +1,27 @@
+{
+    "description": "Test OmniAgent Hooks",
+    "hooks": {
+        "PreToolUse": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "python3 test-hook-py.py",
+                        "timeout": 5
+                    }
+                ]
+            }
+        ],
+        "PostToolUse": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node test-hook-node.js",
+                        "timeout": 5
+                    }
+                ]
+            }
+        ]
+    }
+}

@@ -1,0 +1,21 @@
+name: Stale Issues and PRs
+
+on:
+  schedule:
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@v9
+        with:
+          stale-issue-message: 'This issue is stale due to inactivity. If still relevant, comment to keep it open.'
+          stale-pr-message: 'This PR is stale due to inactivity. If still relevant, comment to keep it open.'
+          stale-issue-label: 'stale'
+          stale-pr-label: 'stale'
+          days-before-stale: 30
+          days-before-close: 10
+          exempt-issue-labels: 'security,pinned,planned'
+          exempt-pr-labels: 'security,pinned,release-blocker'

@@ -1,0 +1,19 @@
+{
+    "name": "@omni-agent/provider-gemini",
+    "version": "0.1.0",
+    "description": "Google Gemini provider for OmniAgent",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "type": "module",
+    "scripts": {
+        "build": "tsc",
+        "clean": "rm -rf dist"
+    },
+    "dependencies": {
+        "@omni-agent/core": "*",
+        "@google/genai": "^0.1.0"
+    },
+    "peerDependencies": {
+        "typescript": "^5.0.0"
+    }
+}

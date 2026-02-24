@@ -1,0 +1,22 @@
+{
+  "name": "@omni-agent/providers",
+  "version": "0.1.0",
+  "description": "Advanced AI Providers for OmniAgent Engine",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "test": "npm run build && node --test dist/*.test.js dist/**/*.test.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.36.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.744.0",
+    "@google/genai": "^1.42.0",
+    "@omni-agent/core": "*",
+    "openai": "^4.85.0",
+    "zod": "^3.24.2",
+    "zod-to-json-schema": "^3.24.1"
+  }
+}

@@ -1,0 +1,80 @@
+# Backlog de Execucao (P0/P1/P2)
+
+## Progresso atual
+
+- concluido: CORE-001 (contrato unico de eventos/erros no core)
+- concluido: padronizacao de erro terminal em slash commands (result:error)
+- concluido parcial: TOOLS-001 (timeout default + limite de comando no bash)
+- concluido parcial: TOOLS-002 (validacao de path em `read_file`, `write_file`, `edit`, `rip_grep`)
+- concluido parcial: TOOLS-002 (validacao de path em `memory`)
+- concluido parcial: TOOLS-002 (validacao de pattern segura em `glob` e `read_many_files`)
+- concluido parcial: TOOLS-001 (git tools sem shell/interpolacao via `execFileSync`)
+- concluido parcial: PROV-001 (preservacao de `toolCallId/toolName` no fluxo de `toolResult`)
+- concluido parcial: PROV-001 (normalizador unico de `tool_call` em Anthropic/OpenAI/Gemini/Bedrock)
+- concluido: PROV-101 (informacao de limites por provider/model via `getModelLimits`)
+- concluido: PROV-101 (catalogo e classificacao de modelos via `listModelCatalog` + `resolveModelLimits`)
+- concluido: CORE-001 (abstracao universal com `ProviderRegistry` + resolucao por modelo + capacidades)
+- concluido parcial: PROV-001 (camada Anthropic com recursos avancados do SDK expostos no provider)
+- concluido parcial: PROV-002 (embeddings implementados no `OpenAIProvider`)
+- concluido parcial: PROV-002 (embeddings implementados no `BedrockProvider`)
+- concluido parcial: CORE-102 (testes automatizados para normalizacao/provider e seguranca de paths/patterns)
+- concluido: ARCH-301 (mapeamento multi-repo e gap analysis consolidado em `MAPEAMENTO_MULTI_REPOS_FUNCIONALIDADES.md`)
+
+## P0 (bloqueante de sistema)
+
+- CORE-001: contrato unico de eventos e tipos de erro
+- CORE-002: fluxo de interrupcao e `plan` mode deterministico
+- TOOLS-001: hardening de `bash` com limites e auditoria
+- TOOLS-002: hardening de `fs/edit` com validacao de path
+- PROV-001: normalizacao de tool-calling em todos providers principais
+- PROV-002: embeddings implementados nos providers pendentes
+- AGENT-001: politicas por agente (budget/max turns/allow deny)
+- RETR-001: indexacao com metadado de versao e invalidez de indice
+- AUTH-001: broker OAuth universal por provider
+- AUTH-002: credential store `auto|keyring|file` com fallback
+- AUTH-003: perfis de identidade de cliente para OAuth (`codex`, `claude-code`, `cursor`, `gemini-cli`)
+- POL-001: policy engine declarativo por regra/prioridade/modo
+- ROUTE-001: roteamento de modelo com fallback por indisponibilidade/quota
+
+## P1 (robustez de producao)
+
+- CORE-101: padrao de resposta estruturada para tools
+- CORE-102: observabilidade minima por etapa de loop
+- TOOLS-101: testes de regressao por tool critica
+- PROV-101: retries/backoff padrao
+- PROV-102: matriz de compatibilidade provider x recurso
+- AGENT-101: telemetria de delegacao/paralelismo
+- MCP-101: webmcp multi-cliente com testes de concorrencia
+- MCP-201: discovery de MCP resources/prompts alem de tools
+- AGENT-201: subagents remotos (A2A) com governanca de permissoes
+- PLUGIN-201: runtime de plugins/skills com manifesto e distribuicao
+
+## P2 (otimizacao)
+
+- RETR-201: chunking semantico avancado
+- CLI-201: melhorias de UX para sessoes longas
+- MCP-201: guia de integracao para clientes MCP externos
+- DX-201: templates de agentes por dominio
+
+## Definicao de pronto por item
+
+- codigo implementado + testes cobrindo sucesso/erro/regressao
+- documentacao tecnica atualizada
+- sem alerta critico de seguranca no escopo do item
+- validacao manual basica registrada
+
+## Ordem de execucao recomendada
+
+1. CORE-001
+2. TOOLS-001
+3. TOOLS-002
+4. PROV-001
+5. PROV-002
+6. AGENT-001
+7. RETR-001
+8. MCP-101
+9. AUTH-001
+10. AUTH-002
+11. AUTH-003
+12. POL-001
+13. ROUTE-001

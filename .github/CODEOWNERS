@@ -1,0 +1,19 @@
+# Default owners
+* @omni-agent/maintainers
+
+# Core runtime
+/packages/core/ @omni-agent/core
+
+# Providers and model integrations
+/packages/providers/ @omni-agent/providers
+
+# Tooling and sandbox boundaries
+/packages/tools/ @omni-agent/tools
+
+# User interfaces and transport layers
+/packages/cli/ @omni-agent/cli
+/packages/webmcp/ @omni-agent/platform
+
+# Governance and policies
+/SECURITY.md @omni-agent/security
+/.github/workflows/ @omni-agent/platform

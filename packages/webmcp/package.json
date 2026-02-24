@@ -1,0 +1,27 @@
+{
+    "name": "@omni-agent/webmcp",
+    "version": "0.1.0",
+    "description": "Streamable HTTP MCP server for OmniAgent — expose all tools to any MCP-compatible client",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "type": "module",
+    "bin": {
+        "webmcp": "dist/cli.js"
+    },
+    "scripts": {
+        "build": "tsc",
+        "clean": "rm -rf dist",
+        "start": "node dist/cli.js"
+    },
+    "dependencies": {
+        "@omni-agent/core": "*",
+        "@omni-agent/tools": "*",
+        "@omni-agent/providers": "*",
+        "zod": "^3.25.76",
+        "zod-to-json-schema": "^3.25.1"
+    },
+    "devDependencies": {
+        "@types/node": "^25.3.0",
+        "typescript": "^5.0.0"
+    }
+}

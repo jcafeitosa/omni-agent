@@ -1,0 +1,31 @@
+{
+  "name": "omni-agent-monorepo",
+  "version": "0.1.0",
+  "description": "Professional multi-provider agent orchestration library and runtime.",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "check": "npm run build && npm test",
+    "lint": "npm run lint --workspaces --if-present",
+    "clean": "npm run clean --workspaces --if-present",
+    "repo:validate": "bash scripts/validate-repo.sh",
+    "release:check": "npm run check && npm pack --dry-run"
+  },
+  "devDependencies": {
+    "@types/glob": "^8.1.0",
+    "typescript": "^5.4.0",
+    "zod": "^3.25.76"
+  },
+  "dependencies": {
+    "glob": "^13.0.6",
+    "ignore": "^7.0.5"
+  }
+}
