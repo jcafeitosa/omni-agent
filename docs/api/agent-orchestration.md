@@ -8,6 +8,8 @@
 - paralelismo controlado (`maxParallel`)
 - execução em background (`background`)
 - ciclo de vida de task (`pending`, `running`, `background`, `completed`, `failed`, `cancelled`)
+- isolamento por worktree (`isolation: "worktree"`)
+- execução cross-process (`externalCommand`)
 
 Principais métodos:
 
@@ -17,6 +19,7 @@ Principais métodos:
 - `listTasks()`
 - `cancelTask(taskId)`
 - `waitForBackground(taskId)`
+- `setSharedState(key, value)` / `listSharedState()`
 
 ## subagent tool actions
 
@@ -30,6 +33,13 @@ Principais métodos:
 - `action=cancel`: cancela task
 - `action=wait`: aguarda finalização de task background
 
+Campos de task relevantes:
+
+- `dependsOn`: dependência entre tasks
+- `collaborationNote`: contexto adicional para handoff
+- `externalCommand`: execução em processo externo
+- `workingDirectory`: diretório de execução da task
+
 ## SkillManager (`@omni-agent/core`)
 
 `SkillManager` descobre e carrega `SKILL.md` de:
@@ -39,4 +49,3 @@ Principais métodos:
 - `plugins/**/skills`
 
 `AgentManager` injeta automaticamente o contexto de skills declaradas no frontmatter do agente (`skills: [...]`) no system prompt do agente.
-

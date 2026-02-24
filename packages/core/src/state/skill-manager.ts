@@ -10,6 +10,12 @@ export interface SkillDefinition {
     referencesDir?: string;
     scriptsDir?: string;
     source: "project" | "plugin" | "user" | "custom";
+    agent?: string;
+    context?: "inherit" | "fork";
+    userInvocable?: boolean;
+    allowedTools?: string[];
+    disallowedTools?: string[];
+    hooks?: Array<{ event: string; command: string; timeout?: number }>;
 }
 
 export interface SkillManagerOptions {
@@ -113,11 +119,20 @@ function parseSkillFile(filePath: string): Omit<SkillDefinition, "source"> | nul
         let name = "";
         let description = "";
         let content = raw;
+        let meta: Partial<SkillDefinition> = {};
         if (match) {
             const frontmatter = yaml.load(match[1]) as Record<string, unknown>;
             name = String(frontmatter?.name || "").trim();
             description = String(frontmatter?.description || "").trim();
             content = match[2].trim();
+            meta = {
+                agent: frontmatter?.agent ? String(frontmatter.agent) : undefined,
+                context: frontmatter?.context === "fork" ? "fork" : "inherit",
+                userInvocable: frontmatter?.["user-invocable"] === false ? false : true,
+                allowedTools: normalizeStringArray(frontmatter?.["allowed-tools"]),
+                disallowedTools: normalizeStringArray(frontmatter?.["disallowed-tools"]),
+                hooks: normalizeHooks(frontmatter?.hooks)
+            };
         }
         if (!name) {
             name = deriveNameFromPath(filePath);
@@ -126,7 +141,8 @@ function parseSkillFile(filePath: string): Omit<SkillDefinition, "source"> | nul
             name,
             description: description || undefined,
             filePath,
-            content
+            content,
+            ...meta
         };
     } catch {
         return null;
@@ -179,4 +195,27 @@ function safeIsDirectory(path: string): boolean {
     } catch {
         return false;
     }
+}
+
+function normalizeStringArray(value: unknown): string[] | undefined {
+    if (!Array.isArray(value)) return undefined;
+    const normalized = value
+        .map((v) => String(v).trim())
+        .filter(Boolean);
+    return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeHooks(value: unknown): Array<{ event: string; command: string; timeout?: number }> | undefined {
+    if (!Array.isArray(value)) return undefined;
+    const hooks = value
+        .map((h) => {
+            const entry = h as Record<string, unknown>;
+            const event = String(entry?.event || "").trim();
+            const command = String(entry?.command || "").trim();
+            const timeout = typeof entry?.timeout === "number" ? entry.timeout : undefined;
+            if (!event || !command) return null;
+            return timeout === undefined ? { event, command } : { event, command, timeout };
+        })
+        .filter(Boolean) as Array<{ event: string; command: string; timeout?: number }>;
+    return hooks.length > 0 ? hooks : undefined;
 }

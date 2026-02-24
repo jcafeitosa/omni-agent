@@ -36,6 +36,10 @@
 - concluido parcial: AGENT-101 (estado compartilhado colaborativo entre tasks + handoff por dependencias)
 - concluido parcial: AGENT-201 (restricao de spawn por `allowedAgents` e eventos de ciclo de vida de subagentes/tasks)
 - concluido parcial: PLUGIN-201 (hot-reload de skills e descoberta multi-diretorio)
+- concluido: AGENT-101 (isolamento `worktree` para tasks e ciclo de vida completo de task manager)
+- concluido: AGENT-201 (execucao cross-process de task via `externalCommand`)
+- concluido: PLUGIN-201 (runtime de plugins com install/enable/disable/update e manifests)
+- concluido: PLUGIN-201 (semantica de frontmatter de skills: agent/context/allowed-tools/hooks/user-invocable)
 
 ## P0 (bloqueante de sistema)
 

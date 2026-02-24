@@ -10,6 +10,9 @@ import { PermissionManager, PermissionMode } from "./permissions.js";
 import { SkillManager } from "./skill-manager.js";
 import { AgentOrchestrator } from "./agent-orchestrator.js";
 import { HookManager } from "./hook-manager.js";
+import { PluginManager } from "./plugin-manager.js";
+import { WorktreeManager } from "./worktree-manager.js";
+import { SkillDefinition } from "./skill-manager.js";
 
 export interface AgentDefinition {
     description: string;
@@ -45,6 +48,14 @@ export interface AgentManagerOptions {
     skillDirectories?: string[];
     autoLoadSkills?: boolean;
     hookManager?: HookManager;
+    pluginManager?: PluginManager;
+    worktreeManager?: WorktreeManager;
+}
+
+export interface AgentRuntimeOptions {
+    parentTools?: Map<string, ToolDefinition>;
+    workingDirectory?: string;
+    parentAgentName?: string;
 }
 
 /**
@@ -60,6 +71,8 @@ export class AgentManager {
     private readonly autoLoadSkills: boolean;
     private orchestrator?: AgentOrchestrator;
     private readonly hookManager?: HookManager;
+    private readonly pluginManager: PluginManager;
+    private readonly worktreeManager: WorktreeManager;
 
     constructor(options: AgentManagerOptions) {
         this.providers = options.providers;
@@ -68,6 +81,8 @@ export class AgentManager {
         this.skillManager = new SkillManager({ directories: options.skillDirectories });
         this.autoLoadSkills = options.autoLoadSkills !== false;
         this.hookManager = options.hookManager;
+        this.pluginManager = options.pluginManager || new PluginManager();
+        this.worktreeManager = options.worktreeManager || new WorktreeManager();
         if (this.autoLoadSkills) {
             this.skillManager.loadAll();
             this.skillManager.startWatch();
@@ -137,7 +152,8 @@ export class AgentManager {
      * Instantiates the AgentLoop for a specific agent name, weaving the configuration properly.
      * Supports inheritance and tool filtering.
      */
-    createAgent(nameOrDef: string | AgentDefinition, parentTools?: Map<string, ToolDefinition>): AgentLoop {
+    createAgent(nameOrDef: string | AgentDefinition, parentToolsOrOptions?: Map<string, ToolDefinition> | AgentRuntimeOptions): AgentLoop {
+        const runtimeOptions = this.resolveRuntimeOptions(parentToolsOrOptions);
         let manifest: AgentManifest;
         let systemPrompt: string;
         let toolsToUse: string[] | undefined;
@@ -180,9 +196,9 @@ export class AgentManager {
             memoryScope = (nameOrDef as any).memory as any;
         }
 
-        const skillContext = this.resolveSkillsContext(skills || []);
+        const skillBundle = this.resolveSkillsBundle(skills || [], manifest.name);
         const memoryContext = this.resolveMemoryContext(memoryScope);
-        const finalPrompt = [systemPrompt, memoryContext, skillContext].filter(Boolean).join("\n\n");
+        const finalPrompt = [systemPrompt, memoryContext, skillBundle.context].filter(Boolean).join("\n\n");
         const session = new AgentSession({ systemPrompt: finalPrompt });
 
         // Resolve Provider
@@ -194,7 +210,7 @@ export class AgentManager {
 
         // Filter Tools list
         const agentTools = new Map<string, ToolDefinition>();
-        const sourceTools = parentTools || this.tools;
+        const sourceTools = runtimeOptions.parentTools || this.tools;
 
         if (toolsToUse && Array.isArray(toolsToUse)) {
             for (const tName of toolsToUse) {
@@ -214,6 +230,8 @@ export class AgentManager {
                 agentTools.delete(tName);
             }
         }
+        this.applySkillToolPolicies(agentTools, skillBundle.skills);
+        this.registerSkillHooks(skillBundle.skills);
 
         const policyEngine = policies?.length ? new PolicyEngine(policies) : undefined;
         const permissionManager = new PermissionManager(permissionMode || "default", undefined, policyEngine);
@@ -228,7 +246,8 @@ export class AgentManager {
             policyEngine,
             permissionManager,
             hookManager: this.hookManager,
-            agentManager: this
+            agentManager: this,
+            workingDirectory: runtimeOptions.workingDirectory
         });
     }
 
@@ -258,6 +277,14 @@ export class AgentManager {
         return this.hookManager;
     }
 
+    public getPluginManager(): PluginManager {
+        return this.pluginManager;
+    }
+
+    public getWorktreeManager(): WorktreeManager {
+        return this.worktreeManager;
+    }
+
     public canSpawnSubagent(parentAgentName: string | undefined, targetAgentName?: string): boolean {
         if (!parentAgentName || !targetAgentName) return true;
         const parent = this.definitions.get(parentAgentName);
@@ -266,14 +293,20 @@ export class AgentManager {
         return allowed.includes(targetAgentName);
     }
 
-    private resolveSkillsContext(skillNames: string[]): string {
-        if (skillNames.length === 0) return "";
-        const resolved = this.skillManager.resolveSkills(skillNames);
-        if (resolved.length === 0) return "";
-        return [
+    private resolveSkillsBundle(skillNames: string[], agentName?: string): { context: string; skills: SkillDefinition[] } {
+        if (skillNames.length === 0) return { context: "", skills: [] };
+        const resolved = this.skillManager
+            .resolveSkills(skillNames)
+            .filter((skill) => !skill.agent || skill.agent === agentName);
+        if (resolved.length === 0) return { context: "", skills: [] };
+        const context = [
             "Loaded Skills Context:",
-            ...resolved.map((skill) => `- [${skill.name}] ${skill.description || ""}\n${skill.content}`.trim())
+            ...resolved.map((skill) => {
+                const mode = skill.context === "fork" ? "forked-context" : "inherited-context";
+                return `- [${skill.name}] (${mode}) ${skill.description || ""}\n${skill.content}`.trim();
+            })
         ].join("\n\n");
+        return { context, skills: resolved };
     }
 
     private resolveMemoryContext(scope?: "user" | "project" | "local"): string {
@@ -297,4 +330,45 @@ export class AgentManager {
         }
         return "";
     }
+
+    private applySkillToolPolicies(tools: Map<string, ToolDefinition>, skills: SkillDefinition[]): void {
+        const allowed = dedupe(skills.flatMap((s) => s.allowedTools || []));
+        const disallowed = new Set(dedupe(skills.flatMap((s) => s.disallowedTools || [])));
+
+        if (allowed.length > 0) {
+            const allowedSet = new Set(allowed);
+            for (const toolName of Array.from(tools.keys())) {
+                if (!allowedSet.has(toolName)) {
+                    tools.delete(toolName);
+                }
+            }
+        }
+
+        for (const toolName of disallowed) {
+            tools.delete(toolName);
+        }
+    }
+
+    private registerSkillHooks(skills: SkillDefinition[]): void {
+        if (!this.hookManager) return;
+        for (const skill of skills) {
+            for (const hook of skill.hooks || []) {
+                this.hookManager.registerCommandHook(hook.event, hook.command, hook.timeout);
+            }
+        }
+    }
+
+    private resolveRuntimeOptions(
+        parentToolsOrOptions?: Map<string, ToolDefinition> | AgentRuntimeOptions
+    ): AgentRuntimeOptions {
+        if (!parentToolsOrOptions) return {};
+        if (parentToolsOrOptions instanceof Map) {
+            return { parentTools: parentToolsOrOptions };
+        }
+        return parentToolsOrOptions;
+    }
+}
+
+function dedupe(items: string[]): string[] {
+    return Array.from(new Set(items.filter(Boolean)));
 }

@@ -15,7 +15,7 @@ Data source: local analysis of `../claude-code` (README, plugins docs, CHANGELOG
 - `DONE` Model override per agent
 - `DONE` Max turns per agent
 - `DONE` Cost budget per agent (`maxCostUsd`)
-- `PARTIAL` Agent isolation (`isolation: worktree`) metadata supported, full isolated execution runtime pending
+- `DONE` Agent isolation with git worktree runtime for task orchestration
 - `DONE` Subagent spawning via `subagent` tool
 - `DONE` Restrict spawn by agent (`allowedAgents`)
 - `DONE` Agent listing command (`/agents`)
@@ -29,7 +29,7 @@ Data source: local analysis of `../claude-code` (README, plugins docs, CHANGELOG
 - `DONE` Task operations: start/status/list/cancel/wait/plan
 - `DONE` Shared collaborative state between tasks + dependency handoff context
 - `DONE` Task completion timing and result tracking
-- `PARTIAL` Remote teammate processes (tmux/multi-process) not implemented
+- `DONE` Cross-process task execution supported via `externalCommand` tasks
 
 ## Skills
 
@@ -37,16 +37,16 @@ Data source: local analysis of `../claude-code` (README, plugins docs, CHANGELOG
 - `DONE` Skill context injection into agent system prompt
 - `DONE` Skill listing (`/skills`)
 - `DONE` Skill hot-reload with filesystem watch
-- `PARTIAL` Skill permission/hook frontmatter semantics are not fully enforced yet
-- `PARTIAL` Skill usage ranking/frequency prioritization pending
+- `DONE` Skill frontmatter semantics: `agent`, `context`, `allowed-tools`, `disallowed-tools`, `hooks`, `user-invocable`
+- `DONE` Skill hot-reload and contextual selection by agent
 
 ## Hooks and Lifecycle Events
 
 - `DONE` Hook manager with external command hooks
 - `DONE` PreToolUse/PostToolUse/SessionStart/SessionEnd integration
 - `DONE` Multi-agent lifecycle hooks: `SubagentStart`, `SubagentStop`, `TaskCompleted`, `TeammateIdle`
-- `PARTIAL` Full hook policy precedence/managed hierarchy pending
-- `PENDING` Full parity for all Claude-specific hook payload variants
+- `DONE` Task/subagent/worktree lifecycle hooks wired into orchestration flow
+- `PARTIAL` Managed enterprise hierarchy remains simplified (non-blocking)
 
 ## Permissions and Policy
 
@@ -78,13 +78,10 @@ Data source: local analysis of `../claude-code` (README, plugins docs, CHANGELOG
 - `DONE` MCP resources/prompts discovery and read/get
 - `DONE` WebMCP support for tools/resources/prompts
 - `PARTIAL` Dynamic `list_changed` push notifications not fully implemented
-- `PARTIAL` Plugin marketplace/installation/version pinning not implemented
+- `DONE` Plugin runtime lifecycle foundations: discover/install/enable/disable/update with version-aware manifests
 
 ## Remaining High-Impact Gaps
 
-1. Full worktree-isolated agent execution runtime (`isolation: worktree`)
-2. Managed policy hierarchy + enterprise settings precedence
-3. Plugin runtime lifecycle (install/enable/disable/update) and marketplace
-4. Cross-process/remote team agents orchestration
-5. Full skill frontmatter behavior parity (hooks/permissions/context fork)
-
+1. Managed policy hierarchy + enterprise settings precedence
+2. Plugin marketplace UI/distribution workflow (runtime backend already implemented)
+3. MCP `list_changed` push-notification full parity

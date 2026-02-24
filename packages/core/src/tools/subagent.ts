@@ -30,7 +30,9 @@ export function subagentTool(agentManager: AgentManager): ToolDefinition {
                     agentName: z.string().optional(),
                     dependsOn: z.array(z.string()).optional(),
                     background: z.boolean().optional(),
-                    collaborationNote: z.string().optional()
+                    collaborationNote: z.string().optional(),
+                    externalCommand: z.string().optional(),
+                    workingDirectory: z.string().optional()
                 }))
             }).optional().describe("Optional multi-agent plan with dependency orchestration")
         }),
@@ -78,7 +80,8 @@ export function subagentTool(agentManager: AgentManager): ToolDefinition {
                     query: resolvedQuery,
                     agentName,
                     customDefinition,
-                    background: true
+                    background: true,
+                    workingDirectory: context?.workingDirectory
                 };
                 const started = await orchestrator.startTask(task);
                 return JSON.stringify(started, null, 2);

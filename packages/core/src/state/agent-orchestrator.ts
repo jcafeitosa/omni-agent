@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { AgentLoop } from "../loops/agent-loop.js";
 import { AgentManager } from "./agent-manager.js";
 
@@ -6,6 +7,7 @@ export interface TeamTask {
     query: string;
     agentName?: string;
     customDefinition?: {
+        description?: string;
         prompt: string;
         tools?: string[];
         disallowedTools?: string[];
@@ -13,10 +15,16 @@ export interface TeamTask {
         maxTurns?: number;
         maxCostUsd?: number;
         skills?: string[];
+        isolation?: "none" | "worktree";
+        permissionMode?: "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk";
+        allowedAgents?: string[];
+        memory?: "user" | "project" | "local";
     };
     dependsOn?: string[];
     background?: boolean;
     collaborationNote?: string;
+    externalCommand?: string;
+    workingDirectory?: string;
 }
 
 export interface TeamPlan {
@@ -184,7 +192,9 @@ export class AgentOrchestrator {
             try {
                 const agent = this.createTaskAgent(task);
                 const queryWithContext = this.buildCollaborativeQuery(task);
-                const result = await agent.run(queryWithContext);
+                const result = task.externalCommand
+                    ? await this.runExternalTask(task, queryWithContext)
+                    : await agent.run(queryWithContext);
                 if (this.cancellations.has(task.id)) {
                     return this.finalizeCancelled(task.id, started);
                 }
@@ -313,16 +323,26 @@ export class AgentOrchestrator {
     }
 
     private createTaskAgent(task: TeamTask): AgentLoop {
+        const isolation = task.customDefinition?.isolation || this.manager.getDefinition(task.agentName || "")?.manifest.isolation;
+        if (isolation === "worktree") {
+            return this.createWorktreeIsolatedTaskAgent(task);
+        }
         if (task.customDefinition) {
-            return this.manager.createAgent(task.customDefinition as any);
+            return this.manager.createAgent(task.customDefinition as any, {
+                workingDirectory: task.workingDirectory
+            });
         }
         if (task.agentName) {
-            return this.manager.createAgent(task.agentName);
+            return this.manager.createAgent(task.agentName, {
+                workingDirectory: task.workingDirectory
+            });
         }
         return this.manager.createAgent({
             description: "Default teammate agent",
             prompt: "You are a specialized teammate agent.",
             maxTurns: 10
+        }, {
+            workingDirectory: task.workingDirectory
         });
     }
 
@@ -354,5 +374,69 @@ export class AgentOrchestrator {
         } catch {
             // hooks are non-blocking for task orchestration
         }
+    }
+
+    private createWorktreeIsolatedTaskAgent(task: TeamTask): AgentLoop {
+        const throwUninitialized = () => {
+            throw new Error("Worktree-isolated agent requested before runtime initialization.");
+        };
+        const lazy = {
+            run: async (query: string) => {
+                const worktree = await this.manager.getWorktreeManager().create(task.id);
+                await this.emitHook("WorktreeCreate", {
+                    task_id: task.id,
+                    worktree_path: worktree.path
+                });
+                try {
+                    const loop = task.customDefinition
+                        ? this.manager.createAgent(task.customDefinition as any, { workingDirectory: worktree.path })
+                        : task.agentName
+                            ? this.manager.createAgent(task.agentName, { workingDirectory: worktree.path })
+                            : this.manager.createAgent({
+                                description: "Worktree teammate",
+                                prompt: "You are a specialized teammate agent.",
+                                maxTurns: 10
+                            }, { workingDirectory: worktree.path });
+                    return await loop.run(query);
+                } finally {
+                    await this.manager.getWorktreeManager().remove(worktree.path);
+                    await this.emitHook("WorktreeRemove", {
+                        task_id: task.id,
+                        worktree_path: worktree.path
+                    });
+                }
+            }
+        };
+        return {
+            run: lazy.run,
+            runStream: throwUninitialized as any,
+            initialize: async () => undefined
+        } as unknown as AgentLoop;
+    }
+
+    private runExternalTask(task: TeamTask, queryWithContext: string): Promise<string> {
+        return new Promise((resolve, reject) => {
+            const child = spawn(task.externalCommand!, {
+                shell: true,
+                cwd: task.workingDirectory || process.cwd(),
+                env: {
+                    ...process.env,
+                    OMNI_AGENT_TASK_ID: task.id,
+                    OMNI_AGENT_TASK_QUERY: queryWithContext
+                }
+            });
+            let stdout = "";
+            let stderr = "";
+            child.stdout?.on("data", (d) => (stdout += d.toString()));
+            child.stderr?.on("data", (d) => (stderr += d.toString()));
+            child.on("error", reject);
+            child.on("close", (code) => {
+                if (code === 0) {
+                    resolve(stdout.trim() || `External task ${task.id} completed.`);
+                } else {
+                    reject(new Error(stderr.trim() || `External task failed with code ${code}`));
+                }
+            });
+        });
     }
 }

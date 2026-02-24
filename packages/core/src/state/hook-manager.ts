@@ -32,6 +32,15 @@ export class HookManager {
         this.cwd = options.cwd;
     }
 
+    public registerCommandHook(eventName: string, command: string, timeout?: number): void {
+        if (!this.hooksConfig.hooks[eventName]) {
+            this.hooksConfig.hooks[eventName] = [];
+        }
+        this.hooksConfig.hooks[eventName].push({
+            hooks: [{ type: "command", command, timeout }]
+        });
+    }
+
     /**
      * Loads a hooks.json file from a plugin/extension directory.
      */

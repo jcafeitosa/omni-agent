@@ -35,6 +35,7 @@ interface AgentLoopOptions {
     agentName?: string;
     policyEngine?: PolicyEngine;
     agentManager?: AgentManager;
+    workingDirectory?: string;
 }
 
 /**
@@ -64,6 +65,7 @@ export class AgentLoop {
     private agentName?: string;
     private policyEngine?: PolicyEngine;
     public readonly agentManager?: AgentManager;
+    private readonly workingDirectory: string;
     private isInterrupted = false;
 
     constructor(options: AgentLoopOptions) {
@@ -79,6 +81,7 @@ export class AgentLoop {
         this.agentName = options.agentName;
         this.policyEngine = options.policyEngine;
         this.agentManager = options.agentManager;
+        this.workingDirectory = options.workingDirectory || process.cwd();
 
         if (this.policyEngine && !options.permissionManager) {
             this.permissionManager.setPolicyEngine(this.policyEngine);
@@ -109,7 +112,7 @@ export class AgentLoop {
         this.contextLoader = new ContextLoader();
 
         // Load project constitution if available
-        const constitution = this.contextLoader.loadConstitution(process.cwd());
+        const constitution = this.contextLoader.loadConstitution(this.workingDirectory);
         if (constitution) {
             const currentPrompt = this.session.getSystemPrompt();
             this.session.setSystemPrompt(`${currentPrompt}\n\nProject Constitution (CLAUDE.md):\n${constitution}`);
@@ -426,7 +429,7 @@ export class AgentLoop {
                         const result = await tool.execute(argsToUse, {
                             sandbox: this.sandbox,
                             loop: this,
-                            workingDirectory: process.cwd()
+                            workingDirectory: this.workingDirectory
                         });
 
                         let finalResult = result;
