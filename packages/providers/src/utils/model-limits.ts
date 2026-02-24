@@ -25,7 +25,9 @@ const LIMITS_CATALOG: CatalogEntry[] = [
             reasoningClass: "advanced",
             modalities: ["text", "image", "code"],
             supportsToolCalling: true,
-            supportsEmbeddings: false
+            supportsEmbeddings: false,
+            supportsEffort: false,
+            supportsAdaptiveThinking: false
         },
         notes: "Estimated defaults; verify against provider docs for exact deployment limits."
     },
@@ -43,7 +45,9 @@ const LIMITS_CATALOG: CatalogEntry[] = [
             reasoningClass: "baseline",
             modalities: ["text", "image", "code"],
             supportsToolCalling: true,
-            supportsEmbeddings: false
+            supportsEmbeddings: false,
+            supportsEffort: false,
+            supportsAdaptiveThinking: false
         },
         notes: "Estimated defaults; verify against provider docs for exact deployment limits."
     },
@@ -61,7 +65,10 @@ const LIMITS_CATALOG: CatalogEntry[] = [
             reasoningClass: "advanced",
             modalities: ["text", "image", "code"],
             supportsToolCalling: true,
-            supportsEmbeddings: false
+            supportsEmbeddings: false,
+            supportsEffort: true,
+            supportedEffortLevels: ["low", "medium", "high", "max"],
+            supportsAdaptiveThinking: true
         },
         notes: "Estimated defaults; verify against provider docs for exact deployment limits."
     },
@@ -79,7 +86,10 @@ const LIMITS_CATALOG: CatalogEntry[] = [
             reasoningClass: "advanced",
             modalities: ["text", "image", "code"],
             supportsToolCalling: true,
-            supportsEmbeddings: true
+            supportsEmbeddings: true,
+            supportsEffort: true,
+            supportedEffortLevels: ["low", "medium", "high"],
+            supportsAdaptiveThinking: true
         },
         notes: "Estimated defaults; verify against provider docs for exact deployment limits."
     },
@@ -97,7 +107,10 @@ const LIMITS_CATALOG: CatalogEntry[] = [
             reasoningClass: "advanced",
             modalities: ["text", "image", "code"],
             supportsToolCalling: true,
-            supportsEmbeddings: true
+            supportsEmbeddings: true,
+            supportsEffort: true,
+            supportedEffortLevels: ["low", "medium", "high", "max"],
+            supportsAdaptiveThinking: true
         },
         notes: "Estimated defaults; verify against provider docs for exact deployment limits."
     },
@@ -115,7 +128,9 @@ const LIMITS_CATALOG: CatalogEntry[] = [
             reasoningClass: "baseline",
             modalities: ["text", "code"],
             supportsToolCalling: false,
-            supportsEmbeddings: true
+            supportsEmbeddings: true,
+            supportsEffort: false,
+            supportsAdaptiveThinking: false
         },
         notes: "Embedding model entry."
     },
@@ -133,7 +148,9 @@ const LIMITS_CATALOG: CatalogEntry[] = [
             reasoningClass: "baseline",
             modalities: ["text", "code"],
             supportsToolCalling: false,
-            supportsEmbeddings: true
+            supportsEmbeddings: true,
+            supportsEffort: false,
+            supportsAdaptiveThinking: false
         },
         notes: "Embedding model entry."
     },
@@ -151,7 +168,9 @@ const LIMITS_CATALOG: CatalogEntry[] = [
             reasoningClass: "baseline",
             modalities: ["text", "code"],
             supportsToolCalling: false,
-            supportsEmbeddings: true
+            supportsEmbeddings: true,
+            supportsEffort: false,
+            supportsAdaptiveThinking: false
         },
         notes: "Estimated defaults; verify against provider docs for exact deployment limits."
     }
@@ -209,7 +228,9 @@ export function resolveModelLimits(
             reasoningClass: "baseline",
             modalities: ["text", "code"],
             supportsToolCalling: true,
-            supportsEmbeddings: "provider-dependent"
+            supportsEmbeddings: "provider-dependent",
+            supportsEffort: false,
+            supportsAdaptiveThinking: false
         },
         notes: "No catalog entry found for this provider/model. Configure limits explicitly when required."
     };

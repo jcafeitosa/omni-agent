@@ -25,6 +25,7 @@ export interface TeamTask {
     collaborationNote?: string;
     externalCommand?: string;
     workingDirectory?: string;
+    toolUseId?: string;
 }
 
 export interface TeamPlan {
@@ -185,6 +186,7 @@ export class AgentOrchestrator {
             }
             await this.emitHook("SubagentStart", {
                 task_id: task.id,
+                tool_use_id: task.toolUseId,
                 agent_name: task.agentName,
                 query: task.query,
                 background: Boolean(task.background)
@@ -212,6 +214,7 @@ export class AgentOrchestrator {
                 this.sharedState.set(task.id, result);
                 await this.emitHook("TaskCompleted", {
                     task_id: task.id,
+                    tool_use_id: task.toolUseId,
                     agent_name: task.agentName,
                     success: true,
                     elapsed_ms: elapsedMs,
@@ -219,6 +222,7 @@ export class AgentOrchestrator {
                 });
                 await this.emitHook("SubagentStop", {
                     task_id: task.id,
+                    tool_use_id: task.toolUseId,
                     agent_name: task.agentName,
                     success: true,
                     elapsed_ms: elapsedMs,
@@ -226,6 +230,7 @@ export class AgentOrchestrator {
                 });
                 await this.emitHook("TeammateIdle", {
                     task_id: task.id,
+                    tool_use_id: task.toolUseId,
                     agent_name: task.agentName,
                     idle: true
                 });
@@ -251,6 +256,7 @@ export class AgentOrchestrator {
                 });
                 await this.emitHook("TaskCompleted", {
                     task_id: task.id,
+                    tool_use_id: task.toolUseId,
                     agent_name: task.agentName,
                     success: false,
                     elapsed_ms: elapsedMs,
@@ -258,6 +264,7 @@ export class AgentOrchestrator {
                 });
                 await this.emitHook("SubagentStop", {
                     task_id: task.id,
+                    tool_use_id: task.toolUseId,
                     agent_name: task.agentName,
                     success: false,
                     elapsed_ms: elapsedMs,
@@ -304,12 +311,14 @@ export class AgentOrchestrator {
         });
         void this.emitHook("TaskCompleted", {
             task_id: taskId,
+            tool_use_id: previous?.task?.toolUseId,
             success: false,
             elapsed_ms: elapsedMs,
             error: "Cancelled by user"
         });
         void this.emitHook("SubagentStop", {
             task_id: taskId,
+            tool_use_id: previous?.task?.toolUseId,
             success: false,
             elapsed_ms: elapsedMs,
             error: "Cancelled by user"
@@ -422,6 +431,7 @@ export class AgentOrchestrator {
                 env: {
                     ...process.env,
                     OMNI_AGENT_TASK_ID: task.id,
+                    OMNI_AGENT_TOOL_USE_ID: task.toolUseId || "",
                     OMNI_AGENT_TASK_QUERY: queryWithContext
                 }
             });

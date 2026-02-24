@@ -34,6 +34,8 @@ test("resolveModelLimits includes classification payload", () => {
     const limits = resolveModelLimits("gemini", "gemini-2.5-flash");
     assert.equal(limits.classification?.supportsToolCalling, true);
     assert.equal(limits.classification?.tier, "fast");
+    assert.equal(limits.classification?.supportsEffort, true);
+    assert.equal(limits.classification?.supportsAdaptiveThinking, true);
 });
 
 test("listModelCatalog returns entries and supports provider filter", () => {

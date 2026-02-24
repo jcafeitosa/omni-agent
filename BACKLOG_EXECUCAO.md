@@ -44,6 +44,11 @@
 - concluido: AGENT-201 (compatibilidade de frontmatter e ferramentas para agentes em formato CLI generico)
 - concluido: PLUGIN-201 (desambiguacao de skills por escopo `skill@scope` para evitar colisoes)
 - concluido: MCP-201 (WebMCP com notificacoes `list_changed` para tools/resources/prompts via SSE)
+- concluido: AGENT-201 (evento `task_notification` correlacionado por `tool_use_id` para subagents/tasks)
+- concluido: CORE-101 (Query API com `close()` e `promptSuggestion()` para UX programatica)
+- concluido: POL-001 (permission suggestions em respostas de deny para integracao com UI/CLI)
+- concluido: MCP-201 (gerenciamento de MCP servers via status/toggle/reconnect no runtime de tools)
+- concluido: ROUTE-001 (roteamento effort-aware com capacidades `supportsEffort`/`supportsAdaptiveThinking`)
 
 ## P0 (bloqueante de sistema)
 

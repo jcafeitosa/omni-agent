@@ -48,7 +48,7 @@ export interface ToolDefinition<T = any> {
     name: string;
     description: string;
     parameters: z.ZodType<T>;
-    execute: (args: T, context?: { sandbox?: Sandbox; loop?: unknown; workingDirectory?: string }) => Promise<string>;
+    execute: (args: T, context?: { sandbox?: Sandbox; loop?: unknown; workingDirectory?: string; toolUseId?: string }) => Promise<string>;
 }
 
 export interface ProviderResponse {
@@ -78,6 +78,9 @@ export interface ProviderModelLimits {
         modalities: Array<"text" | "image" | "audio" | "video" | "code">;
         supportsToolCalling: boolean;
         supportsEmbeddings: boolean | "provider-dependent";
+        supportsEffort?: boolean;
+        supportedEffortLevels?: Array<"low" | "medium" | "high" | "max">;
+        supportsAdaptiveThinking?: boolean;
     };
 }
 

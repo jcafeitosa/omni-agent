@@ -73,6 +73,7 @@ export type SDKEvent =
     | { type: 'text'; text: string; uuid: string }
     | { type: 'tool_use'; tool: string; input: any; tool_use_id: string; uuid: string }
     | { type: 'tool_result'; tool: string; result: any; tool_use_id: string; is_error?: boolean; error?: SDKError; uuid: string }
+    | { type: 'task_notification'; subtype: 'task_started' | 'task_completed' | 'task_failed' | 'task_cancelled'; task_id: string; tool_use_id?: string; agent_name?: string; message?: string; uuid: string }
     | { type: 'status'; subtype: 'info' | 'progress' | 'warning' | 'error'; message: string; error?: SDKError; uuid: string }
     | { type: 'hook'; subtype: 'started' | 'progress' | 'response'; hook_name: string; event: string; uuid: string }
     | { type: 'result'; subtype: 'success' | 'error'; result: string; usage?: any; error?: SDKError; uuid: string };

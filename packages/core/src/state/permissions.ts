@@ -11,6 +11,14 @@ export type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | '
 export interface PermissionResult {
     behavior: 'allow' | 'deny';
     reason?: string;
+    suggestions?: PermissionSuggestion[];
+}
+
+export interface PermissionSuggestion {
+    id: string;
+    label: string;
+    mode: PermissionMode;
+    scope?: "once" | "session" | "project";
 }
 
 /**
@@ -65,7 +73,14 @@ export class PermissionManager {
 
         // Plan mode always denies execution
         if (this.mode === 'plan') {
-            return { behavior: 'deny', reason: 'Tool execution is disabled in "plan" mode.' };
+            return {
+                behavior: 'deny',
+                reason: 'Tool execution is disabled in "plan" mode.',
+                suggestions: [
+                    { id: "switch-default", label: "Switch to default mode", mode: "default", scope: "session" },
+                    { id: "switch-bypass", label: "Switch to bypass mode", mode: "bypassPermissions", scope: "session" }
+                ]
+            };
         }
 
         // acceptEdits auto-allows file modifications
@@ -75,7 +90,14 @@ export class PermissionManager {
 
         // dontAsk denies if not explicitly allowed (placeholder for more complex rules)
         if (this.mode === 'dontAsk') {
-            return { behavior: 'deny', reason: 'Tool execution denied in "dontAsk" mode.' };
+            return {
+                behavior: 'deny',
+                reason: 'Tool execution denied in "dontAsk" mode.',
+                suggestions: [
+                    { id: "switch-default", label: "Switch to default mode", mode: "default", scope: "session" },
+                    { id: "switch-plan", label: "Switch to plan mode", mode: "plan", scope: "session" }
+                ]
+            };
         }
 
         // Delegate to callback if provided (e.g., for CLI interactive prompts)

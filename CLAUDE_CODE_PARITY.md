@@ -58,7 +58,7 @@ Data source: local analysis of `../claude-code` (README, plugins docs, CHANGELOG
 - `DONE` Permission modes (`default`, `plan`, `dontAsk`, etc.)
 - `DONE` Declarative policy engine (priority/rules/effects)
 - `DONE` Tool permission checks integrated with policy engine
-- `PARTIAL` Advanced permission suggestion UX/destination scopes pending
+- `DONE` Permission suggestions payload returned on deny decisions (ready for UI/CLI integration)
 
 ## Model Routing and Providers
 
@@ -67,7 +67,7 @@ Data source: local analysis of `../claude-code` (README, plugins docs, CHANGELOG
 - `DONE` Router with fallback provider/model
 - `DONE` OAuth-priority selection + explicit default model + latest/cheapest auto-selection
 - `DONE` Local model runtime (`llama.cpp`) + Ollama local/remoto
-- `PARTIAL` Per-task model effort/adaptive-thinking capability routing pending
+- `DONE` Per-task model effort/adaptive-thinking capability routing
 
 ## OAuth and CLI Identity
 

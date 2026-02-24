@@ -6,5 +6,6 @@ export * from "./ask-user.js";
 export * from "./web-search.js";
 export * from "./bash.js";
 export * from "./mcp.js";
+export * from "./mcp-manager.js";
 export * from "./git.js";
 export * from "./browser.js";

@@ -141,3 +141,29 @@ test("router respects defaultModel when provided and available", async () => {
 
     assert.equal(result.model, "p2-z");
 });
+
+test("router prefers models that support requested effort capabilities", async () => {
+    const registry = new ProviderRegistry();
+    registry.register({
+        name: "anthropic",
+        create: (opts?: any) => new MockProvider("anthropic", opts?.model || "claude-3-5-haiku-20241022"),
+        modelPatterns: [/^claude-/i]
+    });
+
+    const manager = new ProviderModelManager({ registry, defaultCooldownMs: 10_000 });
+    manager.availability.upsertModels(
+        "anthropic",
+        ["claude-3-5-haiku-20241022", "claude-3-5-sonnet-20241022"],
+        "configured"
+    );
+
+    const router = new ModelRouter({ registry, modelManager: manager });
+    const result = await router.generateText([], {
+        provider: "anthropic",
+        allowProviderFallback: false,
+        refreshBeforeRoute: false,
+        generateOptions: { effort: "high", adaptiveThinking: true }
+    });
+
+    assert.equal(result.model, "claude-3-5-sonnet-20241022");
+});

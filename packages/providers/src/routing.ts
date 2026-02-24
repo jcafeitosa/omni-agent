@@ -37,6 +37,8 @@ export interface GenerateWithFallbackRequest {
     generateOptions?: any;
 }
 
+type EffortLevel = "low" | "medium" | "high" | "max";
+
 export class ModelRouter {
     private readonly registry: ProviderRegistry;
     private readonly modelManager: ProviderModelManager;
@@ -136,6 +138,11 @@ export class ModelRouter {
         const candidates = dedupe([...active, ...(fallbackConfigured ? [fallbackConfigured] : [])]);
         if (candidates.length === 0) return undefined;
 
+        const effortAware = this.pickEffortAwareModel(provider, candidates, request);
+        if (effortAware) {
+            return effortAware;
+        }
+
         const preferOAuth = request.preferOAuthModels !== false;
         const oauthDefaultModel = preferOAuth && this.isOAuthPreferredProvider(provider) ? fallbackConfigured : undefined;
         if (oauthDefaultModel && candidates.includes(oauthDefaultModel)) {
@@ -231,6 +238,42 @@ export class ModelRouter {
         return [...candidates].sort((a, b) => extractRecencyNumber(b) - extractRecencyNumber(a))[0];
     }
 
+    private pickEffortAwareModel(
+        provider: string,
+        candidates: string[],
+        request: GenerateWithFallbackRequest
+    ): string | undefined {
+        const preference = parseEffortPreference(request.generateOptions);
+        if (!preference.level && !preference.adaptiveThinking) {
+            return undefined;
+        }
+
+        const matching = candidates.filter((model) => {
+            const classification = resolveModelLimits(provider, model).classification;
+            if (!classification) return false;
+
+            if (preference.level) {
+                if (!classification.supportsEffort) return false;
+                const supported = classification.supportedEffortLevels || [];
+                if (!supported.includes(preference.level)) return false;
+            }
+
+            if (preference.adaptiveThinking && !classification.supportsAdaptiveThinking) {
+                return false;
+            }
+
+            return true;
+        });
+
+        if (matching.length === 0) return undefined;
+
+        const preferOAuth = request.preferOAuthModels !== false;
+        if (preferOAuth && this.isOAuthPreferredProvider(provider)) {
+            return this.pickLatestModel(matching);
+        }
+        return this.pickLatestCheapestModel(provider, matching);
+    }
+
     private isOAuthPreferredProvider(provider: string): boolean {
         return OAUTH_PREFERRED_PROVIDERS.has(provider);
     }
@@ -260,4 +303,36 @@ function extractRecencyNumber(model: string): number {
         return Number(m2.join("").replace(/\D/g, "").slice(0, 12)) || 0;
     }
     return 0;
+}
+
+function parseEffortPreference(generateOptions: any): { level?: EffortLevel; adaptiveThinking?: boolean } {
+    if (!generateOptions || typeof generateOptions !== "object") {
+        return {};
+    }
+
+    const effortRaw = generateOptions.effort ?? generateOptions.reasoningEffort ?? generateOptions["reasoning_effort"];
+    const adaptiveRaw =
+        generateOptions.adaptiveThinking ?? generateOptions["adaptive_thinking"] ?? generateOptions.thinking?.adaptive;
+
+    const level = normalizeEffortLevel(effortRaw);
+    const adaptiveThinking = adaptiveRaw === true;
+
+    return { level, adaptiveThinking };
+}
+
+function normalizeEffortLevel(value: unknown): EffortLevel | undefined {
+    if (typeof value === "string") {
+        const v = value.trim().toLowerCase();
+        if (v === "low" || v === "medium" || v === "high" || v === "max") {
+            return v;
+        }
+        return undefined;
+    }
+    if (value && typeof value === "object") {
+        const level = (value as Record<string, unknown>).level;
+        if (typeof level === "string") {
+            return normalizeEffortLevel(level);
+        }
+    }
+    return undefined;
 }

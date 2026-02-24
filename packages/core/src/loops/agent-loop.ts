@@ -3,6 +3,8 @@ import { AgentMessage, ToolCall, SDKEvent, SDKError } from "../types/messages.js
 import { ToolDefinition, Provider, Sandbox } from "../index.js";
 import { HookManager } from "../state/hook-manager.js";
 import { randomUUID } from "node:crypto";
+import { existsSync, statSync } from "node:fs";
+import { join } from "node:path";
 
 import { PermissionManager, PermissionMode } from "../state/permissions.js";
 import { PolicyEngine } from "../state/policy-engine.js";
@@ -43,6 +45,8 @@ interface AgentLoopOptions {
  */
 export interface Query extends AsyncGenerator<SDKEvent, void, unknown> {
     interrupt(): void;
+    close(): void;
+    promptSuggestion(): Promise<string[]>;
     setPermissionMode(mode: PermissionMode): void;
 }
 
@@ -67,6 +71,7 @@ export class AgentLoop {
     public readonly agentManager?: AgentManager;
     private readonly workingDirectory: string;
     private isInterrupted = false;
+    private configState = new Map<string, number>();
 
     constructor(options: AgentLoopOptions) {
         this.session = options.session;
@@ -132,6 +137,20 @@ export class AgentLoop {
         return this.agentName;
     }
 
+    public emitTaskNotification(notification: {
+        subtype: "task_started" | "task_completed" | "task_failed" | "task_cancelled";
+        task_id: string;
+        tool_use_id?: string;
+        agent_name?: string;
+        message?: string;
+    }): void {
+        this.session.eventBus.emit("task_notification", notification);
+    }
+
+    public async promptSuggestion(): Promise<string[]> {
+        return this.generatePromptSuggestions();
+    }
+
     /**
      * Executes the agent loop synchronously (blocking until final text)
      */
@@ -161,6 +180,8 @@ export class AgentLoop {
                 throw(e: any) { return generator.throw(e); },
                 async [Symbol.asyncDispose]() { await generator.return(undefined); },
                 interrupt() { }, // Commands are generally fast/non-interruptible
+                close() { },
+                async promptSuggestion() { return self.generatePromptSuggestions(); },
                 setPermissionMode() { }
             };
         }
@@ -187,6 +208,12 @@ export class AgentLoop {
             interrupt() {
                 self.isInterrupted = true;
             },
+            close() {
+                self.isInterrupted = true;
+            },
+            async promptSuggestion() {
+                return self.generatePromptSuggestions();
+            },
             setPermissionMode(mode: PermissionMode) {
                 self.permissionManager.setMode(mode);
             }
@@ -203,6 +230,81 @@ export class AgentLoop {
         return { source, code, message, details, retryable };
     }
 
+    private generatePromptSuggestions(): string[] {
+        const messages = this.session.getMessages();
+        const recent = [...messages].reverse();
+        const lastToolError = recent.find((m) => m.role === "toolResult" && m.isError);
+        if (lastToolError?.text) {
+            return [
+                `Investigate and fix this tool error: ${String(lastToolError.text).slice(0, 160)}`,
+                "Retry using a safer alternative approach and explain each step.",
+                "Summarize likely root causes and propose a minimal fix plan."
+            ];
+        }
+
+        const lastAssistant = recent.find((m) => m.role === "assistant" && typeof m.text === "string" && m.text.trim().length > 0);
+        if (lastAssistant?.text) {
+            return [
+                `Continue from your last result and implement the next concrete step.`,
+                "Provide a concise validation checklist and run it.",
+                "Summarize the current status and remaining gaps."
+            ];
+        }
+
+        return [
+            "Describe the objective, constraints, and acceptance criteria.",
+            "Ask for a step-by-step implementation plan with verification commands.",
+            "Request a risk review before applying changes."
+        ];
+    }
+
+    private captureConfigSnapshot(): Map<string, number> {
+        const candidates = [
+            join(this.workingDirectory, "CLAUDE.md"),
+            join(this.workingDirectory, "AGENTS.md"),
+            join(this.workingDirectory, ".mcp.json"),
+            join(this.workingDirectory, ".claude", "settings.json"),
+            join(this.workingDirectory, ".claude", "hooks", "hooks.json"),
+            join(this.workingDirectory, ".omniagent", "config.json"),
+            join(this.workingDirectory, ".omniagent", "policies.json")
+        ];
+        const snapshot = new Map<string, number>();
+        for (const file of candidates) {
+            if (!existsSync(file)) continue;
+            try {
+                snapshot.set(file, statSync(file).mtimeMs);
+            } catch {
+                // ignore stat failures
+            }
+        }
+        return snapshot;
+    }
+
+    private detectConfigChanges(): Array<{ path: string; change: "created" | "modified" | "deleted" }> {
+        const next = this.captureConfigSnapshot();
+        const changes: Array<{ path: string; change: "created" | "modified" | "deleted" }> = [];
+
+        for (const [path, mtime] of next.entries()) {
+            if (!this.configState.has(path)) {
+                changes.push({ path, change: "created" });
+                continue;
+            }
+            const oldMtime = this.configState.get(path)!;
+            if (oldMtime !== mtime) {
+                changes.push({ path, change: "modified" });
+            }
+        }
+
+        for (const path of this.configState.keys()) {
+            if (!next.has(path)) {
+                changes.push({ path, change: "deleted" });
+            }
+        }
+
+        this.configState = next;
+        return changes;
+    }
+
     private async * _runStreamInternal(input: string): AsyncGenerator<SDKEvent, void, unknown> {
         this.isInterrupted = false;
         let didEmitTerminalResult = false;
@@ -217,7 +319,21 @@ export class AgentLoop {
                 uuid: data.uuid || randomUUID()
             });
         };
+        const onTaskNotification = (data: any) => {
+            const subtype = data?.subtype;
+            if (!subtype) return;
+            bubbledEvents.push({
+                type: "task_notification",
+                subtype,
+                task_id: String(data.task_id || ""),
+                tool_use_id: data.tool_use_id ? String(data.tool_use_id) : undefined,
+                agent_name: data.agent_name ? String(data.agent_name) : undefined,
+                message: data.message ? String(data.message) : undefined,
+                uuid: data.uuid || randomUUID()
+            });
+        };
         this.session.eventBus.on("status", onStatus);
+        this.session.eventBus.on("task_notification", onTaskNotification);
 
         try {
             if (this.hookManager) {
@@ -225,6 +341,7 @@ export class AgentLoop {
                 await this.hookManager.emit("SessionStart", { input });
                 yield { type: 'hook', subtype: 'response', hook_name: 'SessionStart', event: 'SessionStart', uuid: randomUUID() };
             }
+            this.configState = this.captureConfigSnapshot();
 
             let turnCount = 0;
             yield { type: 'status', subtype: 'info', message: 'Agent loop started', uuid: randomUUID() };
@@ -284,6 +401,18 @@ export class AgentLoop {
                 }
 
                 this.session.eventBus.emit("turnStart", { turnNumber: turnCount });
+
+                if (this.hookManager) {
+                    const configChanges = this.detectConfigChanges();
+                    if (configChanges.length > 0) {
+                        yield { type: "hook", subtype: "started", hook_name: "ConfigChange", event: "ConfigChange", uuid: randomUUID() };
+                        await this.hookManager.emit("ConfigChange", {
+                            changes: configChanges,
+                            working_directory: this.workingDirectory
+                        });
+                        yield { type: "hook", subtype: "response", hook_name: "ConfigChange", event: "ConfigChange", uuid: randomUUID() };
+                    }
+                }
 
                 // Call LLM Provider
                 let providerResponse;
@@ -367,7 +496,10 @@ export class AgentLoop {
                     });
                     if (perm.behavior === 'deny') {
                         const denyRes = `Tool execution denied: ${perm.reason || 'No reason provided'}`;
-                        const error = this.toSDKError("permission", "TOOL_PERMISSION_DENIED", denyRes, { tool: call.name });
+                        const error = this.toSDKError("permission", "TOOL_PERMISSION_DENIED", denyRes, {
+                            tool: call.name,
+                            suggestions: perm.suggestions
+                        });
                         this.session.addMessage({
                             role: "toolResult",
                             text: denyRes,
@@ -429,7 +561,8 @@ export class AgentLoop {
                         const result = await tool.execute(argsToUse, {
                             sandbox: this.sandbox,
                             loop: this,
-                            workingDirectory: this.workingDirectory
+                            workingDirectory: this.workingDirectory,
+                            toolUseId: toolUseID
                         });
 
                         let finalResult = result;
@@ -491,6 +624,7 @@ export class AgentLoop {
             didEmitTerminalResult = true;
         } finally {
             this.session.eventBus.off("status", onStatus);
+            this.session.eventBus.off("task_notification", onTaskNotification);
             if (this.isInterrupted && !didEmitTerminalResult) {
                 const error = this.toSDKError("core", "INTERRUPTED", "Interrupted by user");
                 yield { type: 'result', subtype: 'error', result: 'Interrupted by user', error, uuid: randomUUID() };
