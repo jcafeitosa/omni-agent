@@ -54,11 +54,18 @@ export class ModelRouter {
 
         for (const providerName of providers.slice(0, maxAttempts)) {
             if (request.refreshBeforeRoute !== false) {
-                await this.modelManager.refreshProvider(providerName);
+                try {
+                    await this.modelManager.refreshProvider(providerName);
+                } catch {
+                    // Continue routing using configured or inferred model fallback.
+                }
             }
 
             const preferredModel = this.preferredModelForProvider(providerName, request);
-            const model = this.modelManager.chooseModel(providerName, preferredModel) || preferredModel;
+            const model =
+                this.modelManager.chooseModel(providerName, preferredModel) ||
+                preferredModel ||
+                this.inferConfiguredModel(providerName, request);
             if (!model) {
                 attempts.push({
                     provider: providerName,
@@ -69,7 +76,7 @@ export class ModelRouter {
             }
 
             try {
-                const provider = this.registry.create(providerName, this.resolveProviderOptions(providerName, model, request));
+                const provider = this.registry.create(providerName, this.resolveProviderOptions(providerName, request, model));
                 const response = await provider.generateText(messages, request.tools, request.generateOptions);
                 this.modelManager.availability.clearCooldown(providerName, model);
                 attempts.push({ provider: providerName, model });
@@ -95,12 +102,15 @@ export class ModelRouter {
         throw new Error(`All routing attempts failed. ${summary}`);
     }
 
-    private resolveProviderOptions(provider: string, model: string, request: GenerateWithFallbackRequest): any {
-        return {
+    private resolveProviderOptions(provider: string, request: GenerateWithFallbackRequest, model?: string): any {
+        const merged: Record<string, any> = {
             ...this.baseOptions?.[provider],
-            ...request.providerOptions?.[provider],
-            model
+            ...request.providerOptions?.[provider]
         };
+        if (model) {
+            merged.model = model;
+        }
+        return merged;
     }
 
     private preferredModelForProvider(provider: string, request: GenerateWithFallbackRequest): string | undefined {
@@ -110,6 +120,15 @@ export class ModelRouter {
             return request.model;
         }
         return undefined;
+    }
+
+    private inferConfiguredModel(provider: string, request: GenerateWithFallbackRequest): string | undefined {
+        try {
+            const instance = this.registry.create(provider, this.resolveProviderOptions(provider, request));
+            return instance.getModelLimits().model;
+        } catch {
+            return undefined;
+        }
     }
 
     private resolveProviders(request: GenerateWithFallbackRequest): string[] {
@@ -146,4 +165,3 @@ export class ModelRouter {
 function dedupe(items: string[]): string[] {
     return Array.from(new Set(items));
 }
-

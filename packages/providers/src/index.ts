@@ -11,3 +11,4 @@ export * from "./registry.js";
 export * from "./oauth/index.js";
 export * from "./model-manager.js";
 export * from "./routing.js";
+export * from "./routed-provider.js";

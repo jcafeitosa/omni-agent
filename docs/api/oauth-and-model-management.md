@@ -18,3 +18,14 @@
   - refreshes models per provider
   - falls back to local catalog if provider listing fails
   - central point for multi-provider selection workflows
+
+## Routing and fallback
+
+- `ModelRouter` (`packages/providers/src/routing.ts`)
+  - executes `generateText` with provider/model fallback
+  - integrates with cooldown (`markFailure`) automatically on errors
+  - supports provider priority and max-attempt controls
+
+- `RoutedProvider` (`packages/providers/src/routed-provider.ts`)
+  - wrapper implementing core `Provider`
+  - plugs router fallback into existing runtimes (CLI/AgentLoop) without core changes

@@ -22,6 +22,7 @@
 - concluido parcial: DEVOPS-201 (Release GitHub automatizado com artifacts por tag)
 - pendente: DEVOPS-202 (publicacao em GitHub Packages bloqueada por mismatch de scope `@omni-agent/*` x owner `jcafeitosa`)
 - concluido parcial: ROUTE-001 (roteador `ModelRouter` com fallback provider/modelo + integracao de cooldown)
+- concluido parcial: ROUTE-001 (integracao de runtime via `RoutedProvider` e CLI com prioridade de providers)
 
 ## P0 (bloqueante de sistema)
 

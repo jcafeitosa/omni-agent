@@ -1,4 +1,4 @@
-import { createDefaultProviderRegistry, ProviderModelManager } from "@omni-agent/providers";
+import { createDefaultProviderRegistry, ModelRouter, ProviderModelManager } from "@omni-agent/providers";
 
 async function main() {
   const registry = createDefaultProviderRegistry({
@@ -12,7 +12,20 @@ async function main() {
 
   const manager = new ProviderModelManager({
     registry,
+    optionsByProvider: {
+      openai: { model: "gpt-4o" },
+      "llama-cpp": { model: process.env.LLAMA_CPP_MODEL }
+    },
     refreshIntervalMs: 60_000,
+    defaultCooldownMs: 120_000
+  });
+  const router = new ModelRouter({
+    registry,
+    modelManager: manager,
+    optionsByProvider: {
+      openai: { model: "gpt-4o" },
+      "llama-cpp": { model: process.env.LLAMA_CPP_MODEL }
+    },
     defaultCooldownMs: 120_000
   });
 
@@ -25,6 +38,16 @@ async function main() {
   manager.markModelFailure("openai", "gpt-4o", new Error("quota exceeded"));
   const fallback = manager.chooseModel("openai", "gpt-4o");
   console.log("Fallback model after cooldown:", fallback);
+
+  const routed = await router.generateText(
+    [{ role: "user", content: "Responda em uma frase o que e fallback de modelos." }],
+    {
+      providerPriority: ["openai", "llama-cpp"],
+      allowProviderFallback: true
+    }
+  );
+  console.log("Routed provider/model:", routed.provider, routed.model);
+  console.log("Routed response:", routed.response.text);
 }
 
 main().catch((err) => {
