@@ -31,6 +31,8 @@ interface SseClient {
     res: http.ServerResponse;
 }
 
+type CatalogKind = "tools" | "resources" | "prompts";
+
 /**
  * WebMCPServer: A Streamable HTTP MCP server that exposes OmniAgent tools
  * to any MCP-compatible client (Claude Desktop, Cursor, web apps).
@@ -82,6 +84,46 @@ export class WebMcpServer {
         }));
     }
 
+    private notifyCatalogChanged(kind: CatalogKind): void {
+        const notification = JSON.stringify({
+            jsonrpc: "2.0",
+            method: `notifications/${kind}/list_changed`
+        });
+        for (const client of this.clients.values()) {
+            try {
+                client.res.write(`data: ${notification}\n\n`);
+            } catch {
+                this.clients.delete(client.id);
+            }
+        }
+    }
+
+    public replaceTools(tools: Map<string, ToolDefinition>): void {
+        this.tools = tools;
+        this.notifyCatalogChanged("tools");
+    }
+
+    public registerTool(tool: ToolDefinition): void {
+        this.tools.set(tool.name, tool);
+        this.notifyCatalogChanged("tools");
+    }
+
+    public unregisterTool(toolName: string): void {
+        if (this.tools.delete(toolName)) {
+            this.notifyCatalogChanged("tools");
+        }
+    }
+
+    public replaceResources(resources: Array<{ uri: string; name?: string; description?: string; mimeType?: string; text?: string }>): void {
+        this.resources = resources;
+        this.notifyCatalogChanged("resources");
+    }
+
+    public replacePrompts(prompts: Array<{ name: string; description?: string; arguments?: Array<{ name: string; required?: boolean; description?: string }>; template?: string }>): void {
+        this.prompts = prompts;
+        this.notifyCatalogChanged("prompts");
+    }
+
     private async dispatchRpc(body: any): Promise<unknown> {
         const { method, params, id } = body;
 
@@ -94,7 +136,11 @@ export class WebMcpServer {
         if (method === "initialize") {
             return rpcOk({
                 protocolVersion: "2024-11-05",
-                capabilities: { tools: { listChanged: false } },
+                capabilities: {
+                    tools: { listChanged: true },
+                    resources: { listChanged: true },
+                    prompts: { listChanged: true }
+                },
                 serverInfo: { name: this.serverName, version: this.serverVersion }
             });
         }

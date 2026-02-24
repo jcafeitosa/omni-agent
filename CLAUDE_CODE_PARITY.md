@@ -82,11 +82,10 @@ Data source: local analysis of `../claude-code` (README, plugins docs, CHANGELOG
 - `DONE` MCP tools discovery/call bridge
 - `DONE` MCP resources/prompts discovery and read/get
 - `DONE` WebMCP support for tools/resources/prompts
-- `PARTIAL` Dynamic `list_changed` push notifications not fully implemented
+- `DONE` Dynamic `list_changed` push notifications for tools/resources/prompts in WebMCP SSE transport
 - `DONE` Plugin runtime lifecycle foundations: discover/install/enable/disable/update with version-aware manifests
 
 ## Remaining High-Impact Gaps
 
 1. Managed policy hierarchy + enterprise settings precedence
 2. Plugin marketplace UI/distribution workflow (runtime backend already implemented)
-3. MCP `list_changed` push-notification full parity

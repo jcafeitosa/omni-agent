@@ -43,6 +43,7 @@
 - concluido: CORE-102 (suite de testes do `@omni-agent/core` integrada ao `npm test` da raiz)
 - concluido: AGENT-201 (compatibilidade de frontmatter e ferramentas para agentes em formato CLI generico)
 - concluido: PLUGIN-201 (desambiguacao de skills por escopo `skill@scope` para evitar colisoes)
+- concluido: MCP-201 (WebMCP com notificacoes `list_changed` para tools/resources/prompts via SSE)
 
 ## P0 (bloqueante de sistema)
 
