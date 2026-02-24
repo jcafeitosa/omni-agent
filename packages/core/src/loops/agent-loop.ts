@@ -19,6 +19,9 @@ import { PersistentVectorStore } from "../state/persistent-vector-store.js";
 import { semanticSearchTool } from "../tools/semantic-search.js";
 import { delegateTool } from "../tools/delegate.js";
 import { parallelDelegateTool } from "../tools/parallel-delegate.js";
+import type { AgentManager } from "../state/agent-manager.js";
+import { AgentsCommand } from "../commands/agents-command.js";
+import { SkillsCommand } from "../commands/skills-command.js";
 
 interface AgentLoopOptions {
     session: AgentSession;
@@ -31,6 +34,7 @@ interface AgentLoopOptions {
     maxCostUsd?: number;
     agentName?: string;
     policyEngine?: PolicyEngine;
+    agentManager?: AgentManager;
 }
 
 /**
@@ -59,6 +63,7 @@ export class AgentLoop {
     private maxCostUsd?: number;
     private agentName?: string;
     private policyEngine?: PolicyEngine;
+    public readonly agentManager?: AgentManager;
     private isInterrupted = false;
 
     constructor(options: AgentLoopOptions) {
@@ -73,6 +78,7 @@ export class AgentLoop {
         this.maxCostUsd = options.maxCostUsd;
         this.agentName = options.agentName;
         this.policyEngine = options.policyEngine;
+        this.agentManager = options.agentManager;
 
         if (this.policyEngine && !options.permissionManager) {
             this.permissionManager.setPolicyEngine(this.policyEngine);
@@ -97,6 +103,8 @@ export class AgentLoop {
         this.commandRegistry.register(new CommitCommand());
         this.commandRegistry.register(new IndexCommand());
         this.commandRegistry.register(new ClearCommand());
+        this.commandRegistry.register(new AgentsCommand());
+        this.commandRegistry.register(new SkillsCommand());
 
         this.contextLoader = new ContextLoader();
 

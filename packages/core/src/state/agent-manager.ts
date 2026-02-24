@@ -5,6 +5,9 @@ import { AgentSession } from "./session.js";
 import { AgentLoop } from "../loops/agent-loop.js";
 import { Provider, ToolDefinition } from "../index.js";
 import { PolicyEngine, PolicyRule } from "./policy-engine.js";
+import { PermissionManager, PermissionMode } from "./permissions.js";
+import { SkillManager } from "./skill-manager.js";
+import { AgentOrchestrator } from "./agent-orchestrator.js";
 
 export interface AgentDefinition {
     description: string;
@@ -15,6 +18,11 @@ export interface AgentDefinition {
     maxTurns?: number;
     maxCostUsd?: number;
     policies?: PolicyRule[];
+    skills?: string[];
+    background?: boolean;
+    isolation?: "none" | "worktree";
+    permissionMode?: PermissionMode;
+    allowedAgents?: string[];
 }
 
 export interface AgentManifest extends Partial<AgentDefinition> {
@@ -31,6 +39,8 @@ export interface AgentManagerOptions {
     providers: Map<string, Provider>;
     tools: Map<string, ToolDefinition>;
     defaultModelConfig?: { provider: string; model: string };
+    skillDirectories?: string[];
+    autoLoadSkills?: boolean;
 }
 
 /**
@@ -42,11 +52,19 @@ export class AgentManager {
     private providers: Map<string, Provider>;
     private tools: Map<string, ToolDefinition>;
     private defaultModelConfig?: { provider: string; model: string };
+    private readonly skillManager: SkillManager;
+    private readonly autoLoadSkills: boolean;
+    private orchestrator?: AgentOrchestrator;
 
     constructor(options: AgentManagerOptions) {
         this.providers = options.providers;
         this.tools = options.tools;
         this.defaultModelConfig = options.defaultModelConfig;
+        this.skillManager = new SkillManager({ directories: options.skillDirectories });
+        this.autoLoadSkills = options.autoLoadSkills !== false;
+        if (this.autoLoadSkills) {
+            this.skillManager.loadAll();
+        }
     }
 
     /**
@@ -104,6 +122,10 @@ export class AgentManager {
         return Array.from(this.definitions.values());
     }
 
+    getAgentNames(): string[] {
+        return Array.from(this.definitions.keys()).sort();
+    }
+
     /**
      * Instantiates the AgentLoop for a specific agent name, weaving the configuration properly.
      * Supports inheritance and tool filtering.
@@ -117,6 +139,8 @@ export class AgentManager {
         let maxTurns: number | undefined;
         let maxCostUsd: number | undefined;
         let policies: PolicyRule[] | undefined;
+        let skills: string[] | undefined;
+        let permissionMode: PermissionMode | undefined;
 
         if (typeof nameOrDef === "string") {
             const def = this.definitions.get(nameOrDef);
@@ -131,6 +155,8 @@ export class AgentManager {
             maxTurns = manifest.maxTurns;
             maxCostUsd = manifest.maxCostUsd;
             policies = manifest.policies;
+            skills = manifest.skills;
+            permissionMode = manifest.permissionMode;
         } else {
             manifest = { name: "Subagent", ...nameOrDef };
             systemPrompt = nameOrDef.prompt;
@@ -140,9 +166,13 @@ export class AgentManager {
             maxTurns = nameOrDef.maxTurns;
             maxCostUsd = nameOrDef.maxCostUsd;
             policies = nameOrDef.policies;
+            skills = nameOrDef.skills;
+            permissionMode = nameOrDef.permissionMode;
         }
 
-        const session = new AgentSession({ systemPrompt });
+        const skillContext = this.resolveSkillsContext(skills || []);
+        const finalPrompt = skillContext ? `${systemPrompt}\n\n${skillContext}` : systemPrompt;
+        const session = new AgentSession({ systemPrompt: finalPrompt });
 
         // Resolve Provider
         let providerName = model || this.defaultModelConfig?.provider || "default";
@@ -175,6 +205,7 @@ export class AgentManager {
         }
 
         const policyEngine = policies?.length ? new PolicyEngine(policies) : undefined;
+        const permissionManager = new PermissionManager(permissionMode || "default", undefined, policyEngine);
 
         return new AgentLoop({
             session,
@@ -183,7 +214,41 @@ export class AgentManager {
             maxTurns,
             maxCostUsd,
             agentName: manifest.name,
-            policyEngine
+            policyEngine,
+            permissionManager,
+            agentManager: this
         });
+    }
+
+    public getSkillManager(): SkillManager {
+        return this.skillManager;
+    }
+
+    public listAvailableSkills(): Array<{ name: string; description?: string; source: string }> {
+        if (this.autoLoadSkills) {
+            this.skillManager.loadAll();
+        }
+        return this.skillManager.listSkills().map((skill) => ({
+            name: skill.name,
+            description: skill.description,
+            source: skill.source
+        }));
+    }
+
+    public createOrchestrator(): AgentOrchestrator {
+        if (!this.orchestrator) {
+            this.orchestrator = new AgentOrchestrator(this);
+        }
+        return this.orchestrator;
+    }
+
+    private resolveSkillsContext(skillNames: string[]): string {
+        if (skillNames.length === 0) return "";
+        const resolved = this.skillManager.resolveSkills(skillNames);
+        if (resolved.length === 0) return "";
+        return [
+            "Loaded Skills Context:",
+            ...resolved.map((skill) => `- [${skill.name}] ${skill.description || ""}\n${skill.content}`.trim())
+        ].join("\n\n");
     }
 }

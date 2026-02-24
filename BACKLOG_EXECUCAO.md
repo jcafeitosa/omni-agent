@@ -30,6 +30,9 @@
 - concluido parcial: AGENT-001 (budget `maxCostUsd` e politicas por agente no `AgentManager`/`AgentLoop`)
 - concluido: MCP-201 (bridge MCP com resources/prompts + read/get)
 - concluido: ROUTE-001 (selecao automatica priorizando OAuth + default model + latest/cheapest para API providers)
+- concluido parcial: AGENT-101 (orquestracao de tasks com dependencias/paralelo/background no `AgentOrchestrator`)
+- concluido parcial: AGENT-201 (gerenciamento de subagentes via `subagent` com acoes `start/status/list/cancel/wait/plan`)
+- concluido parcial: PLUGIN-201 (carregamento e injecao de contexto de skills via `SkillManager`)
 
 ## P0 (bloqueante de sistema)
 
