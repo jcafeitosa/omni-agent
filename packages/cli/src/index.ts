@@ -20,14 +20,22 @@ import {
     memoryTool,
     bashTool,
     askUserTool,
-    browserTool
+    browserTool,
+    loadMcpServersFromConfigFile,
+    McpServerManager,
+    parseMcpConfig
 } from '@omni-agent/tools';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import chalk from 'chalk';
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import {
+    AgentCommunicationEventLog,
+    AgentCommunicationHub,
+    AgentCommunicationStore,
+    ChannelType,
+    CommunicationRole,
     ConnectorDescriptor,
     ConnectorRegistry,
     ConnectorStrategy,
@@ -53,6 +61,8 @@ async function runInteractiveAgent(argv: any) {
     const oauthStrategy = String(argv['oauth-strategy'] || 'round_robin') as any;
     const sessionFile = argv['session-file'] ? String(argv['session-file']) : undefined;
     const eventLogFile = argv['event-log-file'] ? String(argv['event-log-file']) : undefined;
+    const mcpConfigPath = String(argv["mcp-config"] || ".mcp.json");
+    const mcpAutoConnect = argv["mcp-autoconnect"] !== false;
     const fallbackProviders = String(argv['fallback-providers'] || '')
         .split(',')
         .map((p) => p.trim())
@@ -117,6 +127,29 @@ async function runInteractiveAgent(argv: any) {
         bashTool(),
         askUserTool()
     ];
+
+    const mcpManager = new McpServerManager();
+    const resolvedMcpConfigPath = resolve(mcpConfigPath);
+    try {
+        await access(resolvedMcpConfigPath);
+        const mcpResult = await loadMcpServersFromConfigFile(mcpManager, resolvedMcpConfigPath, {
+            autoConnect: mcpAutoConnect,
+            continueOnError: true,
+            cwd: process.cwd()
+        });
+        for (const tool of mcpManager.listEnabledTools()) {
+            toolList.push(tool);
+        }
+        if (mcpResult.registered.length > 0) {
+            console.log(chalk.gray(`Loaded MCP servers from ${resolvedMcpConfigPath}: ${mcpResult.registered.join(", ")}`));
+        }
+        for (const error of mcpResult.errors) {
+            const prefix = error.server ? `${error.server} (${error.stage})` : error.stage;
+            console.log(chalk.yellow(`MCP warning [${prefix}]: ${error.message}`));
+        }
+    } catch {
+        // ignore missing config file
+    }
 
     const tools = new Map(toolList.map(t => [t.name, t]));
 
@@ -499,6 +532,219 @@ async function runConnectorsCommand(args: any): Promise<void> {
     throw new Error(`Unknown connectors command: ${String(args.connectorsCmd || "")}`);
 }
 
+async function runCommunicationCommand(args: any): Promise<void> {
+    const stateFile = String(args.file || ".omniagent/communication-state.json");
+    const eventLogFile = String(args.eventLog || args["event-log"] || ".omniagent/communication-events.jsonl");
+    const workspaceId = String(args.workspace || "").trim();
+    if (!workspaceId) throw new Error("--workspace is required");
+
+    const hub = new AgentCommunicationHub();
+    const store = new AgentCommunicationStore({ filePath: stateFile });
+    const eventLog = new AgentCommunicationEventLog({ filePath: eventLogFile });
+    const snapshotMeta = await store.loadInto(hub);
+    await eventLog.replayInto(hub, { fromSeqExclusive: snapshotMeta.lastEventSeq });
+    hub.ensureWorkspace(workspaceId);
+
+    if (args.commCmd === "register-agent") {
+        const id = String(args.id || "").trim();
+        const role = String(args.role || "").trim() as CommunicationRole;
+        if (!id || !role) throw new Error("--id and --role are required");
+        hub.registerAgent(workspaceId, {
+            id,
+            displayName: String(args.displayName || args["display-name"] || id),
+            role,
+            team: args.team ? String(args.team) : undefined,
+            department: args.department ? String(args.department) : undefined,
+            tags: parseCsv(args.tags)
+        });
+        const envelope = await eventLog.append({
+            kind: "register_agent",
+            workspaceId,
+            identity: {
+                id,
+                displayName: String(args.displayName || args["display-name"] || id),
+                role,
+                team: args.team ? String(args.team) : undefined,
+                department: args.department ? String(args.department) : undefined,
+                tags: parseCsv(args.tags)
+            }
+        });
+        await store.saveFrom(hub, { lastEventSeq: envelope.seq });
+        console.log(`Agent registered: ${id}`);
+        return;
+    }
+
+    if (args.commCmd === "create-channel") {
+        const name = String(args.name || "").trim();
+        const type = String(args.type || "").trim() as ChannelType;
+        const createdBy = String(args.createdBy || args["created-by"] || "").trim();
+        if (!name || !type || !createdBy) throw new Error("--name, --type, and --created-by are required");
+        const channel = hub.createChannel({
+            workspaceId,
+            name,
+            type,
+            createdBy,
+            team: args.team ? String(args.team) : undefined,
+            department: args.department ? String(args.department) : undefined,
+            isPrivate: args.private !== undefined ? Boolean(args.private) : undefined
+        });
+        const envelope = await eventLog.append({
+            kind: "create_channel",
+            workspaceId,
+            channel: {
+                ...channel,
+                members: Array.from(channel.members.values())
+            }
+        });
+        await store.saveFrom(hub, { lastEventSeq: envelope.seq });
+        console.log(JSON.stringify(channel, null, 2));
+        return;
+    }
+
+    if (args.commCmd === "join-channel") {
+        const channelId = String(args.channel || "").trim();
+        const agentId = String(args.id || "").trim();
+        if (!channelId || !agentId) throw new Error("--channel and --id are required");
+        const joined = hub.joinChannel(workspaceId, channelId, agentId);
+        const envelope = await eventLog.append({
+            kind: "join_channel",
+            workspaceId,
+            channelId,
+            member: joined.member,
+            channelUpdatedAt: joined.channelUpdatedAt
+        });
+        await store.saveFrom(hub, { lastEventSeq: envelope.seq });
+        console.log(`Joined ${agentId} -> ${channelId}`);
+        return;
+    }
+
+    if (args.commCmd === "post-message") {
+        const channelId = String(args.channel || "").trim();
+        const senderId = String(args.sender || "").trim();
+        const text = String(args.text || "").trim();
+        if (!channelId || !senderId || !text) throw new Error("--channel, --sender, and --text are required");
+        const posted = hub.postMessage({
+            workspaceId,
+            channelId,
+            senderId,
+            text,
+            threadRootId: args.thread ? String(args.thread) : undefined
+        });
+        const envelope = await eventLog.append({
+            kind: "post_message",
+            workspaceId,
+            message: posted.message,
+            channelUpdatedAt: posted.channelUpdatedAt
+        });
+        await store.saveFrom(hub, { lastEventSeq: envelope.seq });
+        console.log(JSON.stringify(posted, null, 2));
+        return;
+    }
+
+    if (args.commCmd === "list-channels") {
+        const agentId = args.id ? String(args.id) : undefined;
+        const channels = agentId ? hub.listChannelsForAgent(workspaceId, agentId) : hub.listChannels(workspaceId);
+        console.log(JSON.stringify(channels, null, 2));
+        return;
+    }
+
+    if (args.commCmd === "list-messages") {
+        const channelId = String(args.channel || "").trim();
+        if (!channelId) throw new Error("--channel is required");
+        const messages = hub.listMessages(workspaceId, channelId, {
+            threadRootId: args.thread ? String(args.thread) : undefined
+        });
+        console.log(JSON.stringify(messages, null, 2));
+        return;
+    }
+
+    if (args.commCmd === "search-messages") {
+        const query = String(args.query || "").trim();
+        if (!query) throw new Error("--query is required");
+        const messages = hub.searchMessages(workspaceId, query, {
+            channelId: args.channel ? String(args.channel) : undefined,
+            threadRootId: args.thread ? String(args.thread) : undefined,
+            senderId: args.sender ? String(args.sender) : undefined,
+            limit: args.limit ? Number(args.limit) : undefined
+        });
+        console.log(JSON.stringify(messages, null, 2));
+        return;
+    }
+
+    if (args.commCmd === "compact-events") {
+        const result = await eventLog.compact({
+            retentionDays: args.retentionDays ? Number(args.retentionDays) : undefined,
+            maxEntries: args.maxEntries ? Number(args.maxEntries) : undefined
+        });
+        console.log(JSON.stringify(result, null, 2));
+        return;
+    }
+
+    if (args.commCmd === "export-events") {
+        const output = String(args.output || "").trim();
+        if (!output) throw new Error("--output is required");
+        await eventLog.exportJsonl(resolve(output));
+        console.log(`Events exported to ${resolve(output)}`);
+        return;
+    }
+
+    if (args.commCmd === "watch-events") {
+        const fromSeq = Number(args.fromSeq || args["from-seq"] || 0);
+        const follow = Boolean(args.follow);
+        const pollMs = Number(args.pollMs || args["poll-ms"] || 1000);
+        const timeoutMs = args.timeoutMs || args["timeout-ms"] ? Number(args.timeoutMs || args["timeout-ms"]) : 0;
+        const workspaceFilter =
+            args.workspaceFilter || args["workspace-filter"] ? String(args.workspaceFilter || args["workspace-filter"]) : undefined;
+        const channelFilter = args.channel ? String(args.channel) : undefined;
+        const startedAt = Date.now();
+        let cursor = fromSeq;
+        do {
+            const entries = await eventLog.readAll();
+            const next = entries
+                .filter((entry) => entry.seq > cursor)
+                .filter((entry) => !workspaceFilter || entry.event.workspaceId === workspaceFilter)
+                .filter((entry) => {
+                    if (!channelFilter) return true;
+                    const e = entry.event as any;
+                    return e.channelId === channelFilter || e?.message?.channelId === channelFilter;
+                });
+            for (const event of next) {
+                console.log(JSON.stringify(event));
+                cursor = Math.max(cursor, event.seq);
+            }
+            if (!follow) break;
+            if (timeoutMs > 0 && Date.now() - startedAt >= timeoutMs) break;
+            await delay(pollMs);
+        } while (true);
+        return;
+    }
+
+    if (args.commCmd === "react") {
+        const channelId = String(args.channel || "").trim();
+        const messageId = String(args.message || "").trim();
+        const agentId = String(args.id || "").trim();
+        const emoji = String(args.emoji || "").trim();
+        if (!channelId || !messageId || !agentId || !emoji) {
+            throw new Error("--channel, --message, --id, and --emoji are required");
+        }
+        const updated = hub.addReaction(workspaceId, channelId, messageId, agentId, emoji);
+        const envelope = await eventLog.append({
+            kind: "add_reaction",
+            workspaceId,
+            channelId,
+            messageId,
+            agentId,
+            emoji,
+            updatedAt: updated.updatedAt
+        });
+        await store.saveFrom(hub, { lastEventSeq: envelope.seq });
+        console.log(`Reaction added: ${emoji}`);
+        return;
+    }
+
+    throw new Error(`Unknown comm command: ${String(args.commCmd || "")}`);
+}
+
 async function runOpsCommand(args: any): Promise<void> {
     if (args.opsCmd === "cost-report") {
         const eventsPath = String(args.events || "").trim();
@@ -565,6 +811,298 @@ async function runOpsCommand(args: any): Promise<void> {
     throw new Error(`Unknown ops command: ${String(args.opsCmd || "")}`);
 }
 
+type McpConfigDocument = Record<string, any>;
+
+function normalizeMcpRoot(doc: McpConfigDocument): { root: McpConfigDocument; usesNested: boolean } {
+    if (doc.mcpServers && typeof doc.mcpServers === "object") {
+        return { root: doc.mcpServers as McpConfigDocument, usesNested: true };
+    }
+    return { root: doc, usesNested: false };
+}
+
+async function loadMcpConfigDocument(filePath: string): Promise<McpConfigDocument> {
+    const resolved = resolve(filePath);
+    const raw = await readFile(resolved, "utf8");
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") {
+        throw new Error(`Invalid MCP config root in ${resolved}`);
+    }
+    return parsed as McpConfigDocument;
+}
+
+async function loadOrInitMcpConfigDocument(filePath: string): Promise<McpConfigDocument> {
+    try {
+        return await loadMcpConfigDocument(filePath);
+    } catch {
+        return { mcpServers: {} };
+    }
+}
+
+async function saveMcpConfigDocument(filePath: string, doc: McpConfigDocument): Promise<void> {
+    const resolved = resolve(filePath);
+    await mkdir(dirname(resolved), { recursive: true });
+    await writeFile(resolved, JSON.stringify(doc, null, 2), "utf8");
+}
+
+function parseJsonArgsObject(value: unknown): Record<string, unknown> {
+    if (!value) return {};
+    try {
+        const parsed = JSON.parse(String(value));
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+            throw new Error("must be a JSON object");
+        }
+        return parsed as Record<string, unknown>;
+    } catch (error: any) {
+        throw new Error(`Invalid --arguments JSON: ${error?.message || String(error)}`);
+    }
+}
+
+async function runMcpCommand(args: any): Promise<void> {
+    const filePath = String(args.file || args["mcp-config"] || ".mcp.json");
+    const resolved = resolve(filePath);
+    const mcpCmd = String(args.mcpCmd || "").trim();
+
+    if (mcpCmd === "init") {
+        const force = Boolean(args.force);
+        let exists = true;
+        try {
+            await access(resolved);
+        } catch {
+            exists = false;
+        }
+        if (exists && !force) {
+            throw new Error(`MCP config already exists: ${resolved} (use --force to overwrite)`);
+        }
+        const template = {
+            mcpServers: {
+                filesystem: {
+                    type: "stdio",
+                    command: "npx",
+                    args: ["-y", "@modelcontextprotocol/server-filesystem", "."],
+                    enabled: false
+                },
+                sampleRemote: {
+                    type: "http",
+                    url: "https://example.com/mcp",
+                    enabled: false
+                }
+            }
+        };
+        await saveMcpConfigDocument(resolved, template);
+        console.log(`MCP config initialized: ${resolved}`);
+        return;
+    }
+
+    if (mcpCmd === "upsert") {
+        const serverName = String(args.server || "").trim();
+        if (!serverName) throw new Error("--server is required");
+        const type = String(args.type || args.transport || "").trim().toLowerCase();
+        const normalizedType = type.replace(/[-_]/g, "");
+        const command = args.command ? String(args.command) : args.cmd ? String(args.cmd) : undefined;
+        const endpoint = args.url ? String(args.url) : args.endpoint ? String(args.endpoint) : undefined;
+        const enabled = args.enabled === undefined ? true : Boolean(args.enabled);
+        const argsList = parseCsv(args.args || args.arguments);
+
+        if (!["stdio", "http", "sse", "streamablehttp", ""].includes(normalizedType)) {
+            throw new Error("--type must be one of: stdio, http, sse, streamable-http");
+        }
+        if ((normalizedType === "stdio" || (!normalizedType && command)) && !command) {
+            throw new Error("--command is required for stdio server");
+        }
+        if ((normalizedType === "http" || normalizedType === "sse" || normalizedType === "streamablehttp") && !endpoint) {
+            throw new Error("--url or --endpoint is required for http/sse server");
+        }
+
+        const doc = await loadOrInitMcpConfigDocument(resolved);
+        const normalized = normalizeMcpRoot(doc);
+        const entry: Record<string, unknown> = {
+            ...(normalized.root[serverName] && typeof normalized.root[serverName] === "object"
+                ? (normalized.root[serverName] as Record<string, unknown>)
+                : {}),
+            enabled
+        };
+
+        if (normalizedType) {
+            entry.type = normalizedType === "streamablehttp" ? "http" : normalizedType;
+        }
+        if (command) entry.command = command;
+        if (argsList.length > 0) entry.args = argsList;
+        if (endpoint) entry.url = endpoint;
+        if (args.cwd) entry.cwd = String(args.cwd);
+        if (args.headers) entry.headers = parseJsonArgsObject(args.headers);
+        if (args.env) entry.env = parseJsonArgsObject(args.env);
+
+        normalized.root[serverName] = entry;
+        if (normalized.usesNested) {
+            doc.mcpServers = normalized.root;
+        } else {
+            doc.mcpServers = normalized.root;
+        }
+
+        await saveMcpConfigDocument(resolved, doc);
+        console.log(`MCP server upserted: ${serverName}`);
+        return;
+    }
+
+    if (mcpCmd === "remove") {
+        const serverName = String(args.server || "").trim();
+        if (!serverName) throw new Error("--server is required");
+        const doc = await loadMcpConfigDocument(resolved);
+        const normalized = normalizeMcpRoot(doc);
+        const removed = delete normalized.root[serverName];
+        if (normalized.usesNested) {
+            doc.mcpServers = normalized.root;
+        } else {
+            doc.mcpServers = normalized.root;
+        }
+        await saveMcpConfigDocument(resolved, doc);
+        console.log(removed ? `MCP server removed: ${serverName}` : `MCP server not found: ${serverName}`);
+        return;
+    }
+
+    if (mcpCmd === "toggle") {
+        const serverName = String(args.server || "").trim();
+        if (!serverName) throw new Error("--server is required");
+        if (args.enabled === undefined) throw new Error("--enabled is required (true|false)");
+        const enabled = Boolean(args.enabled);
+
+        const doc = await loadMcpConfigDocument(resolved);
+        const normalized = normalizeMcpRoot(doc);
+        const current = normalized.root[serverName];
+        if (!current || typeof current !== "object") {
+            throw new Error(`MCP server not found in config: ${serverName}`);
+        }
+        normalized.root[serverName] = {
+            ...(current as Record<string, unknown>),
+            enabled
+        };
+        if (normalized.usesNested) {
+            doc.mcpServers = normalized.root;
+        }
+        await saveMcpConfigDocument(resolved, doc);
+        console.log(`MCP server toggled: ${serverName} => enabled=${enabled}`);
+        return;
+    }
+
+    const doc = await loadMcpConfigDocument(resolved);
+    const discovered = parseMcpConfig(doc);
+
+    if (mcpCmd === "doctor") {
+        const normalized = normalizeMcpRoot(doc);
+        const configuredNames = Object.keys(normalized.root);
+        const parsedNames = new Set(discovered.map((d) => d.name));
+        const skipped = configuredNames.filter((name) => !parsedNames.has(name));
+        const enabled = discovered.filter((s) => s.enabled !== false).length;
+        const disabled = discovered.length - enabled;
+        const summary = {
+            file: resolved,
+            configured: configuredNames.length,
+            parsed: discovered.length,
+            enabled,
+            disabled,
+            skipped
+        };
+
+        const manager = new McpServerManager();
+        const loaded = await loadMcpServersFromConfigFile(manager, resolved, {
+            autoConnect: false,
+            continueOnError: true,
+            cwd: process.cwd()
+        });
+        const issues = [
+            ...skipped.map((name) => `server '${name}' is invalid/incomplete and was ignored`),
+            ...loaded.errors.map((error) => `${error.server ? `${error.server}: ` : ""}${error.stage}: ${error.message}`)
+        ];
+        console.log(JSON.stringify({ summary, issues }, null, 2));
+        return;
+    }
+
+    if (mcpCmd === "list") {
+        const payload = discovered.map((server) => ({
+            name: server.name,
+            type: server.type,
+            enabled: server.enabled !== false,
+            command: server.command,
+            url: server.url
+        }));
+        console.log(JSON.stringify(payload, null, 2));
+        return;
+    }
+
+    const manager = new McpServerManager();
+    try {
+        const loaded = await loadMcpServersFromConfigFile(manager, resolved, {
+            autoConnect: Boolean(args.autoconnect ?? true),
+            continueOnError: true,
+            cwd: process.cwd()
+        });
+
+        if (mcpCmd === "status") {
+            const status = manager.mcpServerStatus();
+            console.log(
+                JSON.stringify(
+                    {
+                        file: resolved,
+                        discovered: discovered.length,
+                        registered: loaded.registered.length,
+                        status,
+                        errors: loaded.errors
+                    },
+                    null,
+                    2
+                )
+            );
+            return;
+        }
+
+        if (mcpCmd === "reconnect") {
+            const server = String(args.server || "").trim();
+            if (!server) throw new Error("--server is required");
+            await manager.connectServer(server);
+            const status = await manager.reconnectMcpServer(server);
+            console.log(JSON.stringify(status, null, 2));
+            return;
+        }
+
+        if (mcpCmd === "resources") {
+            const server = args.server ? String(args.server) : undefined;
+            const resources = manager.listResources(server);
+            console.log(JSON.stringify(resources, null, 2));
+            return;
+        }
+
+        if (mcpCmd === "prompts") {
+            const server = args.server ? String(args.server) : undefined;
+            const prompts = manager.listPrompts(server);
+            console.log(JSON.stringify(prompts, null, 2));
+            return;
+        }
+
+        if (mcpCmd === "read") {
+            const server = String(args.server || "").trim();
+            const uri = String(args.uri || "").trim();
+            if (!server || !uri) throw new Error("--server and --uri are required");
+            const result = await manager.readResource(server, uri);
+            console.log(JSON.stringify(result, null, 2));
+            return;
+        }
+
+        if (mcpCmd === "get-prompt") {
+            const server = String(args.server || "").trim();
+            const name = String(args.name || "").trim();
+            if (!server || !name) throw new Error("--server and --name are required");
+            const promptArgs = parseJsonArgsObject(args.arguments);
+            const result = await manager.getPrompt(server, name, promptArgs);
+            console.log(JSON.stringify(result, null, 2));
+            return;
+        }
+    } finally {
+        await manager.close();
+    }
+
+    throw new Error(`Unknown mcp command: ${mcpCmd}`);
+}
+
 function parseCsv(value: unknown): string[] {
     if (!value) return [];
     return Array.from(
@@ -575,6 +1113,10 @@ function parseCsv(value: unknown): string[] {
                 .filter(Boolean)
         )
     );
+}
+
+async function delay(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function loadConnectorRegistry(filePath: string): Promise<ConnectorRegistry> {
@@ -652,6 +1194,16 @@ async function main() {
             type: 'string',
             description: 'Persist runtime events to this JSONL file'
         })
+        .option("mcp-config", {
+            type: "string",
+            description: "Path to MCP config file (.mcp.json compatible)",
+            default: ".mcp.json"
+        })
+        .option("mcp-autoconnect", {
+            type: "boolean",
+            description: "Auto-connect discovered MCP servers at startup",
+            default: true
+        })
         .command(
             'oauth <oauthCmd>',
             'OAuth account management and login',
@@ -716,6 +1268,35 @@ async function main() {
                     .option("tags", { type: "string", description: "Comma-separated tags" })
         )
         .command(
+            "mcp <mcpCmd>",
+            "Inspect and operate MCP servers from config",
+            (y) =>
+                y
+                    .positional("mcpCmd", {
+                        type: "string",
+                        choices: ["init", "doctor", "list", "status", "upsert", "remove", "toggle", "reconnect", "resources", "prompts", "read", "get-prompt"] as const
+                    })
+                    .option("file", { type: "string", description: "MCP config file path", default: ".mcp.json" })
+                    .option("force", { type: "boolean", description: "Overwrite existing MCP config on init", default: false })
+                    .option("server", { type: "string", description: "MCP server name in config" })
+                    .option("type", { type: "string", description: "Server transport type (stdio|http|sse|streamable-http)" })
+                    .option("transport", { type: "string", description: "Alias for --type" })
+                    .option("command", { type: "string", description: "Command for stdio server" })
+                    .option("cmd", { type: "string", description: "Alias for --command" })
+                    .option("args", { type: "string", description: "Comma-separated command args for stdio server" })
+                    .option("arguments", { type: "string", description: "Alias for --args (or JSON for get-prompt)" })
+                    .option("url", { type: "string", description: "Server URL for http/sse transport" })
+                    .option("endpoint", { type: "string", description: "Alias for --url" })
+                    .option("cwd", { type: "string", description: "Working directory for stdio server" })
+                    .option("headers", { type: "string", description: "Headers JSON object for http/sse server" })
+                    .option("env", { type: "string", description: "Environment JSON object for stdio server" })
+                    .option("enabled", { type: "boolean", description: "Enable/disable server (toggle)" })
+                    .option("autoconnect", { type: "boolean", description: "Connect servers before listing status/resources/prompts", default: true })
+                    .option("uri", { type: "string", description: "Resource URI for mcp read" })
+                    .option("name", { type: "string", description: "Prompt name for mcp get-prompt" })
+                    .option("arguments", { type: "string", description: "Prompt arguments as JSON object string" })
+        )
+        .command(
             "connectors <connectorsCmd>",
             "Manage capability connectors",
             (y) =>
@@ -753,6 +1334,64 @@ async function main() {
                     .option("input-format", { type: "string", choices: ["session", "events"] as const, default: "session" })
                     .option("output", { type: "string", description: "Transcript markdown output file" })
         )
+        .command(
+            "comm <commCmd>",
+            "Multi-agent communication workspace commands",
+            (y) =>
+                y
+                    .positional("commCmd", {
+                        type: "string",
+                        choices: [
+                            "register-agent",
+                            "create-channel",
+                            "join-channel",
+                            "post-message",
+                            "list-channels",
+                            "list-messages",
+                            "search-messages",
+                            "react",
+                            "compact-events",
+                            "export-events",
+                            "watch-events"
+                        ] as const
+                    })
+                    .option("file", { type: "string", description: "Communication state file", default: ".omniagent/communication-state.json" })
+                    .option("event-log", {
+                        type: "string",
+                        description: "Communication event log JSONL file",
+                        default: ".omniagent/communication-events.jsonl"
+                    })
+                    .option("workspace", { type: "string", description: "Workspace id", demandOption: true })
+                    .option("id", { type: "string", description: "Agent id" })
+                    .option("display-name", { type: "string", description: "Agent display name" })
+                    .option("role", { type: "string", choices: ["owner", "admin", "team_lead", "agent", "observer"] as const })
+                    .option("team", { type: "string" })
+                    .option("department", { type: "string" })
+                    .option("tags", { type: "string", description: "Comma-separated tags" })
+                    .option("name", { type: "string", description: "Channel name" })
+                    .option("type", {
+                        type: "string",
+                        choices: ["general", "team", "department", "project", "private", "dm", "incident"] as const
+                    })
+                    .option("private", { type: "boolean", description: "Mark channel as private" })
+                    .option("created-by", { type: "string", description: "Creator agent id" })
+                    .option("channel", { type: "string", description: "Channel id" })
+                    .option("sender", { type: "string", description: "Sender agent id" })
+                    .option("text", { type: "string", description: "Message text" })
+                    .option("query", { type: "string", description: "Search query for messages" })
+                    .option("limit", { type: "number", description: "Search result limit" })
+                    .option("retention-days", { type: "number", description: "Retention window (days) for event log compaction" })
+                    .option("max-entries", { type: "number", description: "Max events to keep after compaction" })
+                    .option("output", { type: "string", description: "Output file (for export-events)" })
+                    .option("from-seq", { type: "number", description: "Start watching after this sequence number", default: 0 })
+                    .option("follow", { type: "boolean", description: "Keep polling event log for new entries", default: false })
+                    .option("poll-ms", { type: "number", description: "Polling interval for --follow", default: 1000 })
+                    .option("timeout-ms", { type: "number", description: "Stop follow mode after timeout (0 = no timeout)", default: 0 })
+                    .option("workspace-filter", { type: "string", description: "Filter watched events by workspace id" })
+                    .option("thread", { type: "string", description: "Thread root message id" })
+                    .option("message", { type: "string", description: "Message id" })
+                    .option("emoji", { type: "string", description: "Reaction emoji key" })
+        )
         .help()
         .strict(false);
 
@@ -774,8 +1413,16 @@ async function main() {
         await runConnectorsCommand(argv);
         return;
     }
+    if (commandName === "mcp") {
+        await runMcpCommand(argv);
+        return;
+    }
     if (commandName === "ops") {
         await runOpsCommand(argv);
+        return;
+    }
+    if (commandName === "comm") {
+        await runCommunicationCommand(argv);
         return;
     }
 

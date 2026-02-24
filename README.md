@@ -244,6 +244,14 @@ Observacao: esta entrega cobre a base arquitetural de auth. A execucao completa 
 - `TasksBoard` para gerenciar `TASKS.md` (parse/list/add/update/status/save) como backlog operacional
 - `createPluginScaffold` + `validatePluginStructure` para criar e validar plugins padronizados
 
+## 4.2) Comunicacao multi-agents (base)
+
+- `AgentCommunicationHub` com isolamento por workspace e canais (`general`, `team`, `department`, `project`, `private`, `dm`, `incident`)
+- mensagens com threads (`threadRootId`), menções (`@agent`, `@team:<x>`, `@department:<x>`, `@channel`) e reações
+- ACL inicial por papel e escopo organizacional (owner/admin, time, departamento, privado)
+- roteamento de sessão por escopo DM/canal/conta com `buildAgentPeerSessionKey`
+- `HeartbeatService` orientado por `HEARTBEAT.md` para checks automáticos
+
 ## 5) Contexto semantico
 
 - `Indexer` para varrer codigo e gerar embeddings por chunk
@@ -358,12 +366,29 @@ node packages/cli/dist/index.js tasks list --file TASKS.md
 # conectores por capability
 node packages/cli/dist/index.js connectors upsert --id crm-main --capability crm.read --provider remote-mcp --priority 10
 node packages/cli/dist/index.js connectors resolve --capability crm.read --strategy priority
+
+# MCP runtime/config operations
+node packages/cli/dist/index.js mcp init --file .mcp.json
+node packages/cli/dist/index.js mcp doctor --file .mcp.json
+node packages/cli/dist/index.js mcp list --file .mcp.json
+node packages/cli/dist/index.js mcp upsert --file .mcp.json --server localFs --type stdio --command node --args "server.js,--safe" --enabled true
+node packages/cli/dist/index.js mcp remove --file .mcp.json --server localFs
+node packages/cli/dist/index.js mcp status --file .mcp.json --autoconnect false
+node packages/cli/dist/index.js mcp toggle --file .mcp.json --server github --enabled false
+node packages/cli/dist/index.js mcp resources --file .mcp.json --server github
+node packages/cli/dist/index.js mcp prompts --file .mcp.json --server github
 ```
 
 Rodar WebMCP (apos build):
 
 ```bash
-node packages/webmcp/dist/cli.js --port 3333 --model gemini-2.5-flash
+node packages/webmcp/dist/cli.js --port 3333 --model gemini-2.5-flash --mcp-config .mcp.json
+```
+
+CLI interativo com autoload MCP:
+
+```bash
+node packages/cli/dist/index.js --model gemini-2.5-flash --mcp-config .mcp.json --mcp-autoconnect true
 ```
 
 ## Estado atual

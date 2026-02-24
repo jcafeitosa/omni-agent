@@ -7,7 +7,7 @@
     "omni": "dist/index.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "npm -w @omni-agent/core run build && tsc",
     "test": "npm run build && node --test dist/**/*.test.js",
     "start": "node dist/index.js",
     "dev": "tsc -w"

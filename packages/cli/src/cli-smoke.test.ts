@@ -171,3 +171,288 @@ test("cli tasks and connectors commands persist expected state", async () => {
         await rm(root, { recursive: true, force: true });
     }
 });
+
+test("cli comm commands manage agents channels and messages", async () => {
+    const root = await mkdtemp(join(tmpdir(), "omni-cli-comm-test-"));
+    try {
+        const stateFile = join(root, "comm-state.json");
+        const eventLogFile = join(root, "comm-events.jsonl");
+        const workspace = "ws-smoke";
+
+        await runCli(
+            [
+                "comm",
+                "register-agent",
+                "--file",
+                stateFile,
+                "--event-log",
+                eventLogFile,
+                "--workspace",
+                workspace,
+                "--id",
+                "owner",
+                "--role",
+                "owner"
+            ],
+            process.cwd()
+        );
+        await runCli(
+            [
+                "comm",
+                "register-agent",
+                "--file",
+                stateFile,
+                "--event-log",
+                eventLogFile,
+                "--workspace",
+                workspace,
+                "--id",
+                "dev1",
+                "--role",
+                "agent",
+                "--team",
+                "core",
+                "--department",
+                "eng"
+            ],
+            process.cwd()
+        );
+        const created = await runCli(
+            [
+                "comm",
+                "create-channel",
+                "--file",
+                stateFile,
+                "--event-log",
+                eventLogFile,
+                "--workspace",
+                workspace,
+                "--name",
+                "general",
+                "--type",
+                "general",
+                "--created-by",
+                "owner"
+            ],
+            process.cwd()
+        );
+        assert.match(created.stdout, /"id":\s*"general:general:/);
+        const match = created.stdout.match(/"id":\s*"([^"]+)"/);
+        assert.ok(match?.[1]);
+        const channelId = match![1];
+
+        await runCli(
+            [
+                "comm",
+                "join-channel",
+                "--file",
+                stateFile,
+                "--event-log",
+                eventLogFile,
+                "--workspace",
+                workspace,
+                "--channel",
+                channelId,
+                "--id",
+                "dev1"
+            ],
+            process.cwd()
+        );
+        const posted = await runCli(
+            [
+                "comm",
+                "post-message",
+                "--file",
+                stateFile,
+                "--event-log",
+                eventLogFile,
+                "--workspace",
+                workspace,
+                "--channel",
+                channelId,
+                "--sender",
+                "owner",
+                "--text",
+                "hello @dev1"
+            ],
+            process.cwd()
+        );
+        assert.match(posted.stdout, /"messageId"/);
+
+        const list = await runCli(
+            [
+                "comm",
+                "list-messages",
+                "--file",
+                stateFile,
+                "--event-log",
+                eventLogFile,
+                "--workspace",
+                workspace,
+                "--channel",
+                channelId
+            ],
+            process.cwd()
+        );
+        assert.match(list.stdout, /hello @dev1/);
+
+        const search = await runCli(
+            [
+                "comm",
+                "search-messages",
+                "--file",
+                stateFile,
+                "--event-log",
+                eventLogFile,
+                "--workspace",
+                workspace,
+                "--query",
+                "hello dev1"
+            ],
+            process.cwd()
+        );
+        assert.match(search.stdout, /hello @dev1/);
+
+        const exported = join(root, "events-export.jsonl");
+        const exportResult = await runCli(
+            [
+                "comm",
+                "export-events",
+                "--file",
+                stateFile,
+                "--event-log",
+                eventLogFile,
+                "--workspace",
+                workspace,
+                "--output",
+                exported
+            ],
+            process.cwd()
+        );
+        assert.match(exportResult.stdout, /Events exported/);
+
+        const compact = await runCli(
+            [
+                "comm",
+                "compact-events",
+                "--file",
+                stateFile,
+                "--event-log",
+                eventLogFile,
+                "--workspace",
+                workspace,
+                "--retention-days",
+                "365",
+                "--max-entries",
+                "100"
+            ],
+            process.cwd()
+        );
+        assert.match(compact.stdout, /"before"/);
+
+        const watch = await runCli(
+            [
+                "comm",
+                "watch-events",
+                "--file",
+                stateFile,
+                "--event-log",
+                eventLogFile,
+                "--workspace",
+                workspace,
+                "--from-seq",
+                "0"
+            ],
+            process.cwd()
+        );
+        assert.match(watch.stdout, /"kind":"post_message"/);
+    } finally {
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
+test("cli mcp commands list toggle and status config", async () => {
+    const root = await mkdtemp(join(tmpdir(), "omni-cli-mcp-test-"));
+    try {
+        const mcpFile = join(root, ".mcp.json");
+        const initialized = await runCli(["mcp", "init", "--file", mcpFile], process.cwd());
+        assert.match(initialized.stdout, /MCP config initialized/i);
+
+        await writeFile(
+            mcpFile,
+            JSON.stringify(
+                {
+                    mcpServers: {
+                        remoteA: {
+                            type: "http",
+                            url: "https://example.com/mcp"
+                        },
+                        remoteB: {
+                            transport: "streamable-http",
+                            endpoint: "https://example.org/mcp",
+                            enabled: false
+                        },
+                        broken: {
+                            type: "http"
+                        }
+                    }
+                },
+                null,
+                2
+            ),
+            "utf8"
+        );
+
+        const listed = await runCli(["mcp", "list", "--file", mcpFile], process.cwd());
+        assert.match(listed.stdout, /remoteA/);
+        assert.match(listed.stdout, /remoteB/);
+        assert.doesNotMatch(listed.stdout, /broken/);
+
+        const doctor = await runCli(["mcp", "doctor", "--file", mcpFile], process.cwd());
+        assert.match(doctor.stdout, /"configured":\s*3/);
+        assert.match(doctor.stdout, /"parsed":\s*2/);
+        assert.match(doctor.stdout, /broken/);
+
+        const upserted = await runCli(
+            [
+                "mcp",
+                "upsert",
+                "--file",
+                mcpFile,
+                "--server",
+                "localFs",
+                "--type",
+                "stdio",
+                "--command",
+                "node",
+                "--args",
+                "server.js,--safe",
+                "--enabled",
+                "true"
+            ],
+            process.cwd()
+        );
+        assert.match(upserted.stdout, /MCP server upserted: localFs/);
+
+        const listedWithUpsert = await runCli(["mcp", "list", "--file", mcpFile], process.cwd());
+        assert.match(listedWithUpsert.stdout, /localFs/);
+
+        const toggled = await runCli(["mcp", "toggle", "--file", mcpFile, "--server", "remoteA", "--enabled", "false"], process.cwd());
+        assert.match(toggled.stdout, /enabled=false/);
+
+        const listedAfter = await runCli(["mcp", "list", "--file", mcpFile], process.cwd());
+        assert.match(listedAfter.stdout, /"name": "remoteA"/);
+        assert.match(listedAfter.stdout, /"enabled": false/);
+
+        const removed = await runCli(["mcp", "remove", "--file", mcpFile, "--server", "localFs"], process.cwd());
+        assert.match(removed.stdout, /MCP server removed: localFs/);
+        const listedAfterRemove = await runCli(["mcp", "list", "--file", mcpFile], process.cwd());
+        assert.doesNotMatch(listedAfterRemove.stdout, /localFs/);
+
+        const status = await runCli(["mcp", "status", "--file", mcpFile, "--autoconnect", "false"], process.cwd());
+        assert.match(status.stdout, /"discovered":\s*2/);
+        assert.match(status.stdout, /"registered":\s*0/);
+    } finally {
+        await rm(root, { recursive: true, force: true });
+    }
+});
