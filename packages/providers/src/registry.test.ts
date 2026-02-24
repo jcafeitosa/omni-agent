@@ -8,6 +8,8 @@ test("default registry includes key providers", () => {
     assert.ok(names.includes("anthropic"));
     assert.ok(names.includes("openai"));
     assert.ok(names.includes("gemini"));
+    assert.ok(names.includes("codex"));
+    assert.ok(names.includes("cursor"));
 });
 
 test("registry resolves provider name by model pattern", () => {
@@ -23,4 +25,3 @@ test("registry exposes capabilities for registered providers", () => {
     assert.ok(caps);
     assert.ok(caps?.features.includes("batch"));
 });
-

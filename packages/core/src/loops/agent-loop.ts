@@ -5,6 +5,7 @@ import { HookManager } from "../state/hook-manager.js";
 import { randomUUID } from "node:crypto";
 
 import { PermissionManager, PermissionMode } from "../state/permissions.js";
+import { PolicyEngine } from "../state/policy-engine.js";
 import { CommandRegistry } from "../commands/command-registry.js";
 import { HelpCommand } from "../commands/help-command.js";
 import { CostCommand } from "../commands/cost-command.js";
@@ -27,6 +28,9 @@ interface AgentLoopOptions {
     permissionManager?: PermissionManager;
     sandbox?: Sandbox;
     maxTurns?: number;
+    maxCostUsd?: number;
+    agentName?: string;
+    policyEngine?: PolicyEngine;
 }
 
 /**
@@ -52,6 +56,9 @@ export class AgentLoop {
     private vectorStore: VectorStore;
     private sandbox?: Sandbox;
     private maxTurns: number;
+    private maxCostUsd?: number;
+    private agentName?: string;
+    private policyEngine?: PolicyEngine;
     private isInterrupted = false;
 
     constructor(options: AgentLoopOptions) {
@@ -63,6 +70,13 @@ export class AgentLoop {
         this.sandbox = options.sandbox;
         this.vectorStore = new PersistentVectorStore();
         this.maxTurns = options.maxTurns || 15;
+        this.maxCostUsd = options.maxCostUsd;
+        this.agentName = options.agentName;
+        this.policyEngine = options.policyEngine;
+
+        if (this.policyEngine && !options.permissionManager) {
+            this.permissionManager.setPolicyEngine(this.policyEngine);
+        }
 
         // Register default semantic search tool if indexed
         if (!this.tools.has("semantic_search")) {
@@ -214,6 +228,40 @@ export class AgentLoop {
                 }
 
                 turnCount++;
+                const currentCost = this.session.calculateApproximateCost();
+                if (this.maxCostUsd !== undefined && currentCost > this.maxCostUsd) {
+                    const message = `Execution budget exceeded: $${currentCost.toFixed(4)} > $${this.maxCostUsd.toFixed(4)}`;
+                    const sdkError = this.toSDKError("permission", "BUDGET_EXCEEDED", message, {
+                        maxCostUsd: this.maxCostUsd,
+                        currentCost
+                    }, false);
+                    yield { type: "status", subtype: "error", message, error: sdkError, uuid: randomUUID() };
+                    yield { type: "result", subtype: "error", result: message, error: sdkError, uuid: randomUUID() };
+                    didEmitTerminalResult = true;
+                    return;
+                }
+
+                if (this.policyEngine) {
+                    const turnDecision = this.policyEngine.evaluateTurn({
+                        agentName: this.agentName,
+                        turnCount,
+                        costUsd: currentCost,
+                        permissionMode: this.permissionManager.getMode()
+                    });
+                    if (turnDecision?.behavior === "deny") {
+                        const message = turnDecision.reason || "Denied by policy engine.";
+                        const sdkError = this.toSDKError("permission", "POLICY_DENIED_TURN", message, {
+                            policyRuleId: (turnDecision as any).ruleId,
+                            turnCount,
+                            currentCost
+                        }, false);
+                        yield { type: "status", subtype: "error", message, error: sdkError, uuid: randomUUID() };
+                        yield { type: "result", subtype: "error", result: message, error: sdkError, uuid: randomUUID() };
+                        didEmitTerminalResult = true;
+                        return;
+                    }
+                }
+
                 const { steering, followUp } = this.session.consumeQueues();
 
                 if (steering.length > 0) {
@@ -297,7 +345,11 @@ export class AgentLoop {
                         yield { type: 'hook', subtype: 'response', hook_name: 'PermissionRequest', event: 'PermissionRequest', uuid: randomUUID() };
                     }
 
-                    const perm = await this.permissionManager.checkPermission(call.name, call.args);
+                    const perm = await this.permissionManager.checkPermission(call.name, call.args, {
+                        agentName: this.agentName,
+                        turnCount,
+                        costUsd: this.session.calculateApproximateCost()
+                    });
                     if (perm.behavior === 'deny') {
                         const denyRes = `Tool execution denied: ${perm.reason || 'No reason provided'}`;
                         const error = this.toSDKError("permission", "TOOL_PERMISSION_DENIED", denyRes, { tool: call.name });

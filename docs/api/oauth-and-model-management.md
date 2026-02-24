@@ -5,6 +5,13 @@
 - `OAuthManager`: profile registry, credential retrieval, token refresh orchestration.
 - `OAuthCredentialStore`: pluggable storage abstraction.
 - Store modes: `auto`, `file`, `keyring`.
+- `oauth-client`: PKCE/device code helpers and token exchange utilities.
+
+Implemented login flows:
+
+- `startPkceLogin(providerId)` + `completeAuthorizationCodeLogin(...)`
+- `startDeviceLogin(providerId)` + `pollAndCompleteDeviceLogin(...)`
+- automatic refresh via `refreshIfNeeded(...)` / `getAccessToken(...)`
 
 ## Model availability and cooldown
 
@@ -25,6 +32,11 @@
   - executes `generateText` with provider/model fallback
   - integrates with cooldown (`markFailure`) automatically on errors
   - supports provider priority and max-attempt controls
+  - selection policy:
+    - explicit model if provided
+    - `defaultModel` if provided and available
+    - OAuth-priority providers/models first
+    - for API providers, auto-selects latest+cheapest candidate by catalog heuristics
 
 - `RoutedProvider` (`packages/providers/src/routed-provider.ts`)
   - wrapper implementing core `Provider`

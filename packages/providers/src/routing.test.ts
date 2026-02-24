@@ -103,3 +103,41 @@ test("router falls back to another model in same provider when preferred is on c
     assert.equal(result.model, "p1-b");
     assert.equal(result.response.text, "p1:p1-b");
 });
+
+test("router prioritizes oauth providers first when no explicit provider is set", async () => {
+    const registry = new ProviderRegistry();
+    registry.register({
+        name: "anthropic",
+        create: (opts?: any) => new MockProvider("anthropic", opts?.model || "claude-3-5-sonnet-20241022"),
+        modelPatterns: [/^claude-/i]
+    });
+    registry.register({
+        name: "mistral",
+        create: (opts?: any) => new MockProvider("mistral", opts?.model || "mistral-small"),
+        modelPatterns: [/^mistral-/i]
+    });
+
+    const manager = new ProviderModelManager({ registry, defaultCooldownMs: 10_000 });
+    manager.availability.upsertModels("anthropic", ["claude-3-5-sonnet-20241022"], "configured");
+    manager.availability.upsertModels("mistral", ["mistral-small"], "configured");
+
+    const router = new ModelRouter({ registry, modelManager: manager });
+    const result = await router.generateText([], { refreshBeforeRoute: false });
+    assert.equal(result.provider, "anthropic");
+});
+
+test("router respects defaultModel when provided and available", async () => {
+    const registry = createMockRegistry();
+    const manager = new ProviderModelManager({ registry, defaultCooldownMs: 10_000 });
+    manager.availability.upsertModels("p2", ["p2-a", "p2-z"], "configured");
+
+    const router = new ModelRouter({ registry, modelManager: manager });
+    const result = await router.generateText([], {
+        provider: "p2",
+        defaultModel: "p2-z",
+        allowProviderFallback: false,
+        refreshBeforeRoute: false
+    });
+
+    assert.equal(result.model, "p2-z");
+});

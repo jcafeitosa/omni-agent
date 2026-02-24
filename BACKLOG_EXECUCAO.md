@@ -23,6 +23,13 @@
 - pendente: DEVOPS-202 (publicacao em GitHub Packages bloqueada por mismatch de scope `@omni-agent/*` x owner `jcafeitosa`)
 - concluido parcial: ROUTE-001 (roteador `ModelRouter` com fallback provider/modelo + integracao de cooldown)
 - concluido parcial: ROUTE-001 (integracao de runtime via `RoutedProvider` e CLI com prioridade de providers)
+- concluido: AUTH-001 (fluxos OAuth `pkce`, `authorization_code` e `device_code` no core)
+- concluido: AUTH-002 (refresh e store `auto|keyring|file` operacionais com `OAuthManager`)
+- concluido: AUTH-003 (identidade de CLI e registro default para `codex`, `claude-code`, `cursor`, `gemini-cli`)
+- concluido parcial: POL-001 (policy engine declarativo por regras/prioridade para turn/tool)
+- concluido parcial: AGENT-001 (budget `maxCostUsd` e politicas por agente no `AgentManager`/`AgentLoop`)
+- concluido: MCP-201 (bridge MCP com resources/prompts + read/get)
+- concluido: ROUTE-001 (selecao automatica priorizando OAuth + default model + latest/cheapest para API providers)
 
 ## P0 (bloqueante de sistema)
 

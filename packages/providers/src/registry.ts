@@ -20,6 +20,8 @@ import {
 export interface DefaultRegistryOptions {
     anthropic?: AnthropicProviderOptions;
     openai?: OpenAIProviderOptions;
+    codex?: OpenAIProviderOptions;
+    cursor?: OpenAIProviderOptions;
     gemini?: GeminiProviderOptions;
     bedrock?: BedrockProviderOptions;
     azureOpenAI?: AzureOpenAIProviderOptions;
@@ -50,9 +52,35 @@ export function createDefaultProviderRegistry(options: DefaultRegistryOptions = 
 
     registry.register({
         name: "openai",
-        create: (opts?: OpenAIProviderOptions) => new OpenAIProvider({ ...options.openai, ...opts }),
+        create: (opts?: OpenAIProviderOptions) => new OpenAIProvider({
+            oauthProfileId: "codex",
+            ...options.openai,
+            ...opts
+        }),
         modelPatterns: [/^gpt-/i, /^o[1-9]/i],
         capabilities: { features: ["chat", "tool-calling", "embeddings", "multimodal-input"] }
+    });
+
+    registry.register({
+        name: "codex",
+        create: (opts?: OpenAIProviderOptions) => new OpenAIProvider({
+            oauthProfileId: "codex",
+            ...options.codex,
+            ...opts
+        }),
+        modelPatterns: [/^codex\//i],
+        capabilities: { features: ["chat", "tool-calling", "embeddings", "multimodal-input"], notes: "OAuth identity profile: codex" }
+    });
+
+    registry.register({
+        name: "cursor",
+        create: (opts?: OpenAIProviderOptions) => new OpenAIProvider({
+            oauthProfileId: "cursor",
+            ...options.cursor,
+            ...opts
+        }),
+        modelPatterns: [/^cursor\//i],
+        capabilities: { features: ["chat", "tool-calling", "embeddings", "multimodal-input"], notes: "OAuth identity profile: cursor" }
     });
 
     registry.register({

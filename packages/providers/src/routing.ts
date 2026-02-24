@@ -1,5 +1,6 @@
 import { AgentMessage, ProviderResponse, ToolDefinition, ProviderRegistry } from "@omni-agent/core";
 import { ProviderModelManager } from "./model-manager.js";
+import { resolveModelLimits } from "./utils/model-limits.js";
 
 export interface RouterAttempt {
     provider: string;
@@ -24,11 +25,13 @@ export interface ModelRouterOptions {
 export interface GenerateWithFallbackRequest {
     provider?: string;
     model?: string;
+    defaultModel?: string;
     tools?: ToolDefinition[];
     providerOptions?: Partial<Record<string, any>>;
     providerPriority?: string[];
     maxAttempts?: number;
     allowProviderFallback?: boolean;
+    preferOAuthModels?: boolean;
     refreshBeforeRoute?: boolean;
     cooldownMsOnFailure?: number;
     generateOptions?: any;
@@ -61,11 +64,7 @@ export class ModelRouter {
                 }
             }
 
-            const preferredModel = this.preferredModelForProvider(providerName, request);
-            const model =
-                this.modelManager.chooseModel(providerName, preferredModel) ||
-                preferredModel ||
-                this.inferConfiguredModel(providerName, request);
+            const model = this.selectModel(providerName, request);
             if (!model) {
                 attempts.push({
                     provider: providerName,
@@ -122,6 +121,34 @@ export class ModelRouter {
         return undefined;
     }
 
+    private selectModel(provider: string, request: GenerateWithFallbackRequest): string | undefined {
+        const preferredModel = this.preferredModelForProvider(provider, request);
+        if (preferredModel && !this.modelManager.availability.isOnCooldown(provider, preferredModel)) {
+            return preferredModel;
+        }
+
+        if (request.defaultModel && !this.modelManager.availability.isOnCooldown(provider, request.defaultModel)) {
+            return request.defaultModel;
+        }
+
+        const active = this.modelManager.listProviderModels(provider, false).map((m) => m.model);
+        const fallbackConfigured = this.inferConfiguredModel(provider, request);
+        const candidates = dedupe([...active, ...(fallbackConfigured ? [fallbackConfigured] : [])]);
+        if (candidates.length === 0) return undefined;
+
+        const preferOAuth = request.preferOAuthModels !== false;
+        const oauthDefaultModel = preferOAuth && this.isOAuthPreferredProvider(provider) ? fallbackConfigured : undefined;
+        if (oauthDefaultModel && candidates.includes(oauthDefaultModel)) {
+            return oauthDefaultModel;
+        }
+
+        if (preferOAuth && this.isOAuthPreferredProvider(provider)) {
+            return this.pickLatestModel(candidates);
+        }
+
+        return this.pickLatestCheapestModel(provider, candidates);
+    }
+
     private inferConfiguredModel(provider: string, request: GenerateWithFallbackRequest): string | undefined {
         try {
             const instance = this.registry.create(provider, this.resolveProviderOptions(provider, request));
@@ -134,6 +161,7 @@ export class ModelRouter {
     private resolveProviders(request: GenerateWithFallbackRequest): string[] {
         const chosen: string[] = [];
         const allProviders = this.registry.list().map((r) => r.name);
+        const sortedAllProviders = this.sortProvidersByPolicy(allProviders, request);
 
         if (request.provider && this.registry.has(request.provider)) {
             chosen.push(request.provider);
@@ -152,16 +180,84 @@ export class ModelRouter {
             }
         }
 
-        if (chosen.length === 0 && allProviders.length > 0) {
-            chosen.push(...allProviders);
+        if (chosen.length === 0 && sortedAllProviders.length > 0) {
+            chosen.push(...sortedAllProviders);
         } else if (request.allowProviderFallback !== false) {
-            chosen.push(...allProviders);
+            chosen.push(...sortedAllProviders);
         }
 
         return dedupe(chosen);
+    }
+
+    private sortProvidersByPolicy(providers: string[], request: GenerateWithFallbackRequest): string[] {
+        return [...providers].sort((a, b) => {
+            const oauthA = this.isOAuthPreferredProvider(a) ? 1 : 0;
+            const oauthB = this.isOAuthPreferredProvider(b) ? 1 : 0;
+            if (oauthA !== oauthB) return oauthB - oauthA;
+
+            const rankA = this.bestProviderRank(a, request);
+            const rankB = this.bestProviderRank(b, request);
+            return rankA - rankB;
+        });
+    }
+
+    private bestProviderRank(provider: string, request: GenerateWithFallbackRequest): number {
+        const candidates = this.modelManager.listProviderModels(provider, false).map((m) => m.model);
+        const fallbackConfigured = this.inferConfiguredModel(provider, request);
+        const model = this.pickLatestCheapestModel(provider, dedupe([...candidates, ...(fallbackConfigured ? [fallbackConfigured] : [])]));
+        if (!model) return Number.MAX_SAFE_INTEGER;
+
+        const limits = resolveModelLimits(provider, model);
+        const costRank = costClassRank(limits.classification?.costClass || "medium");
+        const recencyRank = -extractRecencyNumber(model);
+        return costRank * 10_000 + recencyRank;
+    }
+
+    private pickLatestCheapestModel(provider: string, candidates: string[]): string | undefined {
+        if (candidates.length === 0) return undefined;
+        return [...candidates].sort((a, b) => {
+            const limitsA = resolveModelLimits(provider, a);
+            const limitsB = resolveModelLimits(provider, b);
+            const costDelta =
+                costClassRank(limitsA.classification?.costClass || "medium") -
+                costClassRank(limitsB.classification?.costClass || "medium");
+            if (costDelta !== 0) return costDelta;
+            return extractRecencyNumber(b) - extractRecencyNumber(a);
+        })[0];
+    }
+
+    private pickLatestModel(candidates: string[]): string | undefined {
+        if (candidates.length === 0) return undefined;
+        return [...candidates].sort((a, b) => extractRecencyNumber(b) - extractRecencyNumber(a))[0];
+    }
+
+    private isOAuthPreferredProvider(provider: string): boolean {
+        return OAUTH_PREFERRED_PROVIDERS.has(provider);
     }
 }
 
 function dedupe(items: string[]): string[] {
     return Array.from(new Set(items));
+}
+
+const OAUTH_PREFERRED_PROVIDERS = new Set([
+    "anthropic",
+    "gemini",
+    "openai"
+]);
+
+function costClassRank(costClass: "low" | "medium" | "high"): number {
+    if (costClass === "low") return 0;
+    if (costClass === "medium") return 1;
+    return 2;
+}
+
+function extractRecencyNumber(model: string): number {
+    const m = model.match(/(20\d{2})(\d{2})(\d{2})/);
+    if (m) return Number(`${m[1]}${m[2]}${m[3]}`);
+    const m2 = model.match(/(\d+(?:\.\d+)?)/g);
+    if (m2 && m2.length > 0) {
+        return Number(m2.join("").replace(/\D/g, "").slice(0, 12)) || 0;
+    }
+    return 0;
 }

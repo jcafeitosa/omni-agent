@@ -22,7 +22,9 @@ export interface OAuthProviderProfile {
     displayName: string;
     authorizeUrl: string;
     tokenUrl: string;
+    deviceAuthorizeUrl?: string;
     clientId: string;
+    clientSecret?: string;
     scopes: string[];
     redirectUri: string;
     authFlow: "pkce" | "device_code" | "authorization_code";

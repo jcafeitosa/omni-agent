@@ -22,6 +22,8 @@ export interface WebMcpServerOptions {
     tools: Map<string, ToolDefinition>;
     serverName?: string;
     serverVersion?: string;
+    resources?: Array<{ uri: string; name?: string; description?: string; mimeType?: string; text?: string }>;
+    prompts?: Array<{ name: string; description?: string; arguments?: Array<{ name: string; required?: boolean; description?: string }>; template?: string }>;
 }
 
 interface SseClient {
@@ -45,11 +47,15 @@ export class WebMcpServer {
     private clients: Map<string, SseClient> = new Map();
     private serverName: string;
     private serverVersion: string;
+    private resources: Array<{ uri: string; name?: string; description?: string; mimeType?: string; text?: string }>;
+    private prompts: Array<{ name: string; description?: string; arguments?: Array<{ name: string; required?: boolean; description?: string }>; template?: string }>;
 
     constructor(options: WebMcpServerOptions) {
         this.tools = options.tools;
         this.serverName = options.serverName ?? "OmniAgent WebMCP";
         this.serverVersion = options.serverVersion ?? "1.0.0";
+        this.resources = options.resources ?? [];
+        this.prompts = options.prompts ?? [];
         this.server = http.createServer(this.handleRequest.bind(this));
     }
 
@@ -104,6 +110,66 @@ export class WebMcpServer {
 
         if (method === "tools/list") {
             return rpcOk({ tools: this.buildToolList() });
+        }
+
+        if (method === "resources/list") {
+            return rpcOk({
+                resources: this.resources.map((r) => ({
+                    uri: r.uri,
+                    name: r.name,
+                    description: r.description,
+                    mimeType: r.mimeType || "text/plain"
+                }))
+            });
+        }
+
+        if (method === "resources/read") {
+            const uri = String(params?.uri || "");
+            const resource = this.resources.find((r) => r.uri === uri);
+            if (!resource) {
+                return rpcErr(-32602, `Resource not found: ${uri}`);
+            }
+            return rpcOk({
+                contents: [
+                    {
+                        uri: resource.uri,
+                        mimeType: resource.mimeType || "text/plain",
+                        text: resource.text || ""
+                    }
+                ]
+            });
+        }
+
+        if (method === "prompts/list") {
+            return rpcOk({
+                prompts: this.prompts.map((p) => ({
+                    name: p.name,
+                    description: p.description,
+                    arguments: p.arguments || []
+                }))
+            });
+        }
+
+        if (method === "prompts/get") {
+            const name = String(params?.name || "");
+            const prompt = this.prompts.find((p) => p.name === name);
+            if (!prompt) {
+                return rpcErr(-32602, `Prompt not found: ${name}`);
+            }
+            const argumentValues = (params?.arguments || {}) as Record<string, unknown>;
+            const rendered = renderTemplate(prompt.template || "", argumentValues);
+            return rpcOk({
+                description: prompt.description,
+                messages: [
+                    {
+                        role: "user",
+                        content: {
+                            type: "text",
+                            text: rendered
+                        }
+                    }
+                ]
+            });
         }
 
         if (method === "tools/call") {
@@ -232,4 +298,8 @@ export class WebMcpServer {
             this.server.close(err => err ? reject(err) : resolve());
         });
     }
+}
+
+function renderTemplate(template: string, args: Record<string, unknown>): string {
+    return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, key) => String(args[key] ?? ""));
 }

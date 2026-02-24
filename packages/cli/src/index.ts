@@ -32,8 +32,11 @@ async function main() {
         })
         .option('model', {
             type: 'string',
-            description: 'Primary model to use',
-            default: 'gemini-2.5-flash'
+            description: 'Primary model to use (optional). If omitted, router selects automatically.'
+        })
+        .option('default-model', {
+            type: 'string',
+            description: 'Default model preference used when --model is not specified.'
         })
         .option('fallback-providers', {
             type: 'string',
@@ -44,15 +47,16 @@ async function main() {
         .parse();
 
     const primaryProvider = String(argv.provider);
-    const primaryModel = String(argv.model);
+    const primaryModel = argv.model ? String(argv.model) : undefined;
+    const defaultModel = argv['default-model'] ? String(argv['default-model']) : undefined;
     const fallbackProviders = String(argv['fallback-providers'] || '')
         .split(',')
         .map((p) => p.trim())
         .filter(Boolean);
 
     const optionsByProvider: Record<string, any> = {
-        [primaryProvider]: { model: primaryModel },
-        ollama: { model: primaryModel },
+        [primaryProvider]: primaryModel ? { model: primaryModel } : {},
+        ollama: primaryModel ? { model: primaryModel } : {},
         'llama-cpp': {
             model: primaryModel,
             modelDir: process.env.LLAMA_CPP_MODEL_DIR || './models',
@@ -84,8 +88,10 @@ async function main() {
         requestDefaults: {
             provider: primaryProvider,
             model: primaryModel,
+            defaultModel,
+            preferOAuthModels: true,
             providerPriority: [primaryProvider, ...fallbackProviders],
-            allowProviderFallback: fallbackProviders.length > 0,
+            allowProviderFallback: true,
             refreshBeforeRoute: true
         }
     });

@@ -7,6 +7,8 @@ export * from "./state/vector-store.js";
 export * from "./state/persistent-vector-store.js";
 export * from "./state/indexer.js";
 export * from "./state/context-loader.js";
+export * from "./state/permissions.js";
+export * from "./state/policy-engine.js";
 export * from "./tools/delegate.js";
 export * from "./tools/parallel-delegate.js";
 export * from "./utils/diff.js";

@@ -1,3 +1,5 @@
+import { PolicyEngine, ToolPolicyContext } from "./policy-engine.js";
+
 /**
  * Permission Mode for the agent session.
  */
@@ -22,10 +24,12 @@ export type CanUseToolCallback = (toolName: string, input: any) => Promise<Permi
 export class PermissionManager {
     private mode: PermissionMode;
     private canUseTool?: CanUseToolCallback;
+    private policyEngine?: PolicyEngine;
 
-    constructor(mode: PermissionMode = 'default', canUseTool?: CanUseToolCallback) {
+    constructor(mode: PermissionMode = 'default', canUseTool?: CanUseToolCallback, policyEngine?: PolicyEngine) {
         this.mode = mode;
         this.canUseTool = canUseTool;
+        this.policyEngine = policyEngine;
     }
 
     getMode(): PermissionMode {
@@ -36,10 +40,24 @@ export class PermissionManager {
         this.mode = mode;
     }
 
+    setPolicyEngine(policyEngine?: PolicyEngine) {
+        this.policyEngine = policyEngine;
+    }
+
     /**
      * Checks if a tool can be executed based on the current mode and callback.
      */
-    async checkPermission(toolName: string, input: any): Promise<PermissionResult> {
+    async checkPermission(toolName: string, input: any, context?: Omit<ToolPolicyContext, "toolName" | "input">): Promise<PermissionResult> {
+        if (this.policyEngine) {
+            const decision = this.policyEngine.evaluateTool({
+                toolName,
+                input,
+                permissionMode: this.mode,
+                ...context
+            });
+            if (decision) return decision;
+        }
+
         // Bypass always allows
         if (this.mode === 'bypassPermissions') {
             return { behavior: 'allow' };

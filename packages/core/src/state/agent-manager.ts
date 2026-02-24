@@ -4,6 +4,7 @@ import * as yaml from "js-yaml";
 import { AgentSession } from "./session.js";
 import { AgentLoop } from "../loops/agent-loop.js";
 import { Provider, ToolDefinition } from "../index.js";
+import { PolicyEngine, PolicyRule } from "./policy-engine.js";
 
 export interface AgentDefinition {
     description: string;
@@ -12,6 +13,8 @@ export interface AgentDefinition {
     disallowedTools?: string[];
     model?: string;
     maxTurns?: number;
+    maxCostUsd?: number;
+    policies?: PolicyRule[];
 }
 
 export interface AgentManifest extends Partial<AgentDefinition> {
@@ -112,6 +115,8 @@ export class AgentManager {
         let disallowed: string[] | undefined;
         let model: string | undefined;
         let maxTurns: number | undefined;
+        let maxCostUsd: number | undefined;
+        let policies: PolicyRule[] | undefined;
 
         if (typeof nameOrDef === "string") {
             const def = this.definitions.get(nameOrDef);
@@ -124,6 +129,8 @@ export class AgentManager {
             disallowed = manifest.disallowedTools;
             model = manifest.model;
             maxTurns = manifest.maxTurns;
+            maxCostUsd = manifest.maxCostUsd;
+            policies = manifest.policies;
         } else {
             manifest = { name: "Subagent", ...nameOrDef };
             systemPrompt = nameOrDef.prompt;
@@ -131,6 +138,8 @@ export class AgentManager {
             disallowed = nameOrDef.disallowedTools;
             model = nameOrDef.model;
             maxTurns = nameOrDef.maxTurns;
+            maxCostUsd = nameOrDef.maxCostUsd;
+            policies = nameOrDef.policies;
         }
 
         const session = new AgentSession({ systemPrompt });
@@ -165,11 +174,16 @@ export class AgentManager {
             }
         }
 
+        const policyEngine = policies?.length ? new PolicyEngine(policies) : undefined;
+
         return new AgentLoop({
             session,
             provider,
             tools: agentTools,
-            maxTurns
+            maxTurns,
+            maxCostUsd,
+            agentName: manifest.name,
+            policyEngine
         });
     }
 }
