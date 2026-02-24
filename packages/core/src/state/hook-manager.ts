@@ -101,7 +101,7 @@ export class HookManager {
 
     private executeCommandHook(hookDef: HookDefinition, payload: HookEventPayload): Promise<HookEventPayload | null> {
         return new Promise((resolve, reject) => {
-            // Claude Code injects variables like ${CLAUDE_PLUGIN_ROOT}
+            // Some plugin runtimes inject template variables like ${PLUGIN_ROOT}.
             // A real implementation would resolve variables in hookDef.command here.
 
             const commandParts = hookDef.command.split(" ");

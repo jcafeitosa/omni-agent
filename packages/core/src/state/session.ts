@@ -58,7 +58,7 @@ export class AgentSession {
 
     /**
      * Approximate cost calculation in USD.
-     * Rates based on Claude 3.5 Sonnet (approximate).
+     * Approximate default rates used when provider-specific pricing is unavailable.
      */
     calculateApproximateCost(): number {
         const inputRate = 3 / 1_000_000;  // $3 per 1M tokens

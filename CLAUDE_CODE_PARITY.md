@@ -11,6 +11,9 @@ Data source: local analysis of `../claude-code` (README, plugins docs, CHANGELOG
 ## Agents and Subagents
 
 - `DONE` Agent definitions via Markdown + frontmatter (`AgentManager`)
+- `DONE` Compat parsing for Claude Code frontmatter keys (`max-turns`, `max-cost-usd`, `permission-mode`, `allowed-agents`, `disallowed-tools`)
+- `DONE` Auto-discovery of pre-existing agents in `plugins/*/agents` (local and sibling `claude-code`)
+- `DONE` Compatibility mapping of Claude tool names (`Read`, `Write`, `Grep`, `Glob`, `LS`, etc.) to Omni tools
 - `DONE` Tool allowlist/disallowlist per agent
 - `DONE` Model override per agent
 - `DONE` Max turns per agent
@@ -34,11 +37,13 @@ Data source: local analysis of `../claude-code` (README, plugins docs, CHANGELOG
 ## Skills
 
 - `DONE` Skill discovery and loading from multiple directories
+- `DONE` Auto-discovery of pre-existing plugin skills in sibling `claude-code/plugins/*/skills`
 - `DONE` Skill context injection into agent system prompt
 - `DONE` Skill listing (`/skills`)
 - `DONE` Skill hot-reload with filesystem watch
 - `DONE` Skill frontmatter semantics: `agent`, `context`, `allowed-tools`, `disallowed-tools`, `hooks`, `user-invocable`
 - `DONE` Skill hot-reload and contextual selection by agent
+- `DONE` Collision-safe skill naming across plugins (`skill@plugin` fallback)
 
 ## Hooks and Lifecycle Events
 

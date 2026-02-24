@@ -45,6 +45,8 @@ export interface AgentManagerOptions {
     providers: Map<string, Provider>;
     tools: Map<string, ToolDefinition>;
     defaultModelConfig?: { provider: string; model: string };
+    agentDirectories?: string[];
+    autoLoadAgents?: boolean;
     skillDirectories?: string[];
     autoLoadSkills?: boolean;
     hookManager?: HookManager;
@@ -60,13 +62,15 @@ export interface AgentRuntimeOptions {
 
 /**
  * AgentManager
- * Dynamically loads and instantiates Agents defined via Markdown files (Claude Code style).
+ * Dynamically loads and instantiates agents defined via Markdown frontmatter.
  */
 export class AgentManager {
     private definitions: Map<string, ParsedAgentDefinition> = new Map();
     private providers: Map<string, Provider>;
     private tools: Map<string, ToolDefinition>;
     private defaultModelConfig?: { provider: string; model: string };
+    private readonly agentDirectories: string[];
+    private readonly autoLoadAgents: boolean;
     private readonly skillManager: SkillManager;
     private readonly autoLoadSkills: boolean;
     private orchestrator?: AgentOrchestrator;
@@ -78,11 +82,21 @@ export class AgentManager {
         this.providers = options.providers;
         this.tools = options.tools;
         this.defaultModelConfig = options.defaultModelConfig;
+        this.agentDirectories = options.agentDirectories || defaultAgentDirectories();
+        this.autoLoadAgents = options.autoLoadAgents !== false;
         this.skillManager = new SkillManager({ directories: options.skillDirectories });
         this.autoLoadSkills = options.autoLoadSkills !== false;
         this.hookManager = options.hookManager;
         this.pluginManager = options.pluginManager || new PluginManager();
         this.worktreeManager = options.worktreeManager || new WorktreeManager();
+        if (this.autoLoadAgents) {
+            for (const dir of this.agentDirectories) {
+                if (existsSync(dir)) {
+                    this.loadDirectory(dir);
+                }
+            }
+        }
+
         if (this.autoLoadSkills) {
             this.skillManager.loadAll();
             this.skillManager.startWatch();
@@ -100,7 +114,8 @@ export class AgentManager {
 
         if (yamlMatch) {
             try {
-                manifest = yaml.load(yamlMatch[1]) as AgentManifest;
+                const raw = yaml.load(yamlMatch[1]) as Record<string, unknown>;
+                manifest = normalizeManifest(raw);
                 systemPrompt = yamlMatch[2].trim();
             } catch (error: any) {
                 throw new Error(`Invalid YAML in Agent Definition ${filePath}: ${error.message}`);
@@ -114,6 +129,7 @@ export class AgentManager {
         if (!manifest.name) {
             throw new Error(`Agent definition in ${filePath} is missing a 'name' field in frontmatter.`);
         }
+        manifest.name = this.toUniqueAgentName(manifest.name, filePath);
 
         const parsed: ParsedAgentDefinition = { filePath, manifest, systemPrompt };
         this.definitions.set(manifest.name, parsed);
@@ -129,7 +145,7 @@ export class AgentManager {
             const fullPath = join(dirPath, file);
             if (lstatSync(fullPath).isDirectory()) {
                 this.loadDirectory(fullPath); // Recursive
-            } else if (file.endsWith(".md")) {
+            } else if (file.endsWith(".md") && isAgentFile(fullPath)) {
                 const content = readFileSync(fullPath, "utf-8");
                 this.parseMarkdownDefinition(fullPath, content);
             }
@@ -173,7 +189,7 @@ export class AgentManager {
             }
             manifest = def.manifest;
             systemPrompt = def.systemPrompt;
-            toolsToUse = manifest.tools;
+            toolsToUse = normalizeToolsList(manifest.tools);
             disallowed = manifest.disallowedTools;
             model = manifest.model;
             maxTurns = manifest.maxTurns;
@@ -185,7 +201,7 @@ export class AgentManager {
         } else {
             manifest = { name: "Subagent", ...nameOrDef };
             systemPrompt = nameOrDef.prompt;
-            toolsToUse = nameOrDef.tools;
+            toolsToUse = normalizeToolsList(nameOrDef.tools);
             disallowed = nameOrDef.disallowedTools;
             model = nameOrDef.model;
             maxTurns = nameOrDef.maxTurns;
@@ -202,7 +218,7 @@ export class AgentManager {
         const session = new AgentSession({ systemPrompt: finalPrompt });
 
         // Resolve Provider
-        let providerName = model || this.defaultModelConfig?.provider || "default";
+        let providerName = this.resolveProviderName(model);
         const provider = this.providers.get(providerName) || this.providers.get("default");
         if (!provider) {
             throw new Error(`No provider found for agent. Ensure a default provider is registered.`);
@@ -214,8 +230,9 @@ export class AgentManager {
 
         if (toolsToUse && Array.isArray(toolsToUse)) {
             for (const tName of toolsToUse) {
-                const t = sourceTools.get(tName);
-                if (t) agentTools.set(tName, t);
+                const resolvedToolName = resolveToolName(sourceTools, tName);
+                const t = resolvedToolName ? sourceTools.get(resolvedToolName) : undefined;
+                if (t && resolvedToolName) agentTools.set(resolvedToolName, t);
             }
         } else {
             // Inherit all tools from source
@@ -367,8 +384,184 @@ export class AgentManager {
         }
         return parentToolsOrOptions;
     }
+
+    private toUniqueAgentName(baseName: string, filePath: string): string {
+        if (!this.definitions.has(baseName)) {
+            return baseName;
+        }
+        const existing = this.definitions.get(baseName);
+        if (existing?.filePath === filePath) {
+            return baseName;
+        }
+        const scope = inferAgentScope(filePath);
+        let candidate = `${baseName}@${scope}`;
+        let index = 2;
+        while (this.definitions.has(candidate)) {
+            candidate = `${baseName}@${scope}-${index}`;
+            index++;
+        }
+        return candidate;
+    }
+
+    private resolveProviderName(model?: string): string {
+        if (!model || model === "inherit") {
+            return this.defaultModelConfig?.provider || "default";
+        }
+        if (this.providers.has(model)) {
+            return model;
+        }
+        return this.defaultModelConfig?.provider || "default";
+    }
 }
 
 function dedupe(items: string[]): string[] {
     return Array.from(new Set(items.filter(Boolean)));
+}
+
+function normalizeToolsList(value: unknown): string[] | undefined {
+    if (!value) return undefined;
+    if (Array.isArray(value)) {
+        return value.map((v) => String(v).trim()).filter(Boolean);
+    }
+    if (typeof value === "string") {
+        return value
+            .split(",")
+            .map((v) => v.trim().replace(/^["']|["']$/g, ""))
+            .filter(Boolean);
+    }
+    return undefined;
+}
+
+function normalizeManifest(raw: Record<string, unknown> | undefined): AgentManifest {
+    const data = raw || {};
+    return {
+        name: String(data.name || "").trim(),
+        description: toOptionalString(data.description),
+        prompt: toOptionalString(data.prompt),
+        tools: normalizeToolsList(data.tools),
+        disallowedTools: normalizeToolsList(data.disallowedTools ?? data["disallowed-tools"]),
+        model: toOptionalString(data.model),
+        maxTurns: toOptionalNumber(data.maxTurns ?? data["max-turns"]),
+        maxCostUsd: toOptionalNumber(data.maxCostUsd ?? data["max-cost-usd"] ?? data["max-cost"]),
+        policies: Array.isArray(data.policies) ? (data.policies as PolicyRule[]) : undefined,
+        skills: normalizeToolsList(data.skills),
+        background: typeof data.background === "boolean" ? data.background : undefined,
+        isolation: data.isolation === "worktree" ? "worktree" : data.isolation === "none" ? "none" : undefined,
+        permissionMode: toPermissionMode(data.permissionMode ?? data["permission-mode"]),
+        allowedAgents: normalizeToolsList(data.allowedAgents ?? data["allowed-agents"]),
+        memory: toMemoryScope(data.memory)
+    };
+}
+
+function toOptionalString(value: unknown): string | undefined {
+    if (typeof value !== "string") return undefined;
+    const normalized = value.trim();
+    return normalized || undefined;
+}
+
+function toOptionalNumber(value: unknown): number | undefined {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value !== "string") return undefined;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function toPermissionMode(value: unknown): PermissionMode | undefined {
+    if (value === "default" || value === "acceptEdits" || value === "bypassPermissions" || value === "plan") {
+        return value;
+    }
+    return undefined;
+}
+
+function toMemoryScope(value: unknown): "user" | "project" | "local" | undefined {
+    if (value === "user" || value === "project" || value === "local") return value;
+    return undefined;
+}
+
+function isAgentFile(filePath: string): boolean {
+    return /\/agents\/[^/]+\.md$/i.test(filePath) || /\/\.claude\/agents\/[^/]+\.md$/i.test(filePath);
+}
+
+function resolveToolName(sourceTools: Map<string, ToolDefinition>, requested: string): string | undefined {
+    const direct = requested.trim();
+    if (!direct) return undefined;
+    if (sourceTools.has(direct)) return direct;
+
+    const normalized = normalizeToolToken(direct);
+    for (const key of sourceTools.keys()) {
+        if (normalizeToolToken(key) === normalized) {
+            return key;
+        }
+    }
+
+    const alias = toolAlias(normalized);
+    if (!alias) return undefined;
+    for (const candidate of alias) {
+        if (sourceTools.has(candidate)) return candidate;
+        const candidateNormalized = normalizeToolToken(candidate);
+        for (const key of sourceTools.keys()) {
+            if (normalizeToolToken(key) === candidateNormalized) {
+                return key;
+            }
+        }
+    }
+    return undefined;
+}
+
+function normalizeToolToken(value: string): string {
+    return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function toolAlias(name: string): string[] | undefined {
+    const aliases: Record<string, string[]> = {
+        read: ["read_file", "read_many_files"],
+        write: ["write_file"],
+        edit: ["edit"],
+        bash: ["bash"],
+        ls: ["glob"],
+        glob: ["glob"],
+        grep: ["rip_grep"],
+        webfetch: ["browser", "web_search"],
+        websearch: ["web_search", "browser"],
+        todowrite: ["memory"],
+        notebookread: ["read_file"],
+        agent: ["subagent", "delegate", "parallel_delegate"]
+    };
+    return aliases[name];
+}
+
+function inferAgentScope(filePath: string): string {
+    const match = filePath.match(/\/plugins\/([^/]+)\//);
+    if (match?.[1]) return match[1];
+    const parts = filePath.split("/");
+    return parts.slice(-2, -1)[0] || "scope";
+}
+
+function defaultAgentDirectories(): string[] {
+    const cwd = process.cwd();
+    const parent = join(cwd, "..");
+    const siblingPluginRoots = safeReadDir(parent)
+        .map((entry) => join(parent, entry, "plugins"))
+        .filter((dir) => existsSync(dir));
+    const pluginAgents = siblingPluginRoots.flatMap((pluginRoot) =>
+        safeReadDir(pluginRoot).map((plugin) => join(pluginRoot, plugin, "agents"))
+    );
+    const localPlugins = join(cwd, "plugins");
+    const localPluginAgents = existsSync(localPlugins)
+        ? safeReadDir(localPlugins).map((plugin) => join(localPlugins, plugin, "agents"))
+        : [];
+    return dedupe([
+        join(cwd, "agents"),
+        join(cwd, ".claude", "agents"),
+        ...localPluginAgents,
+        ...pluginAgents
+    ]).filter((dir) => existsSync(dir));
+}
+
+function safeReadDir(path: string): string[] {
+    try {
+        return readdirSync(path);
+    } catch {
+        return [];
+    }
 }

@@ -1,5 +1,20 @@
 # Agent Orchestration and Skills
 
+## AgentManager (`@omni-agent/core`)
+
+`AgentManager` carrega agentes Markdown de:
+
+- `agents`
+- `.claude/agents`
+- `plugins/*/agents`
+- `../*/plugins/*/agents` em repositórios irmãos (quando existir no workspace)
+
+Compatibilidade de frontmatter com formatos comuns de CLIs de agentes:
+
+- suporta chaves camelCase e kebab-case (`maxTurns`/`max-turns`, `maxCostUsd`/`max-cost-usd`, `permissionMode`/`permission-mode`, `allowedAgents`/`allowed-agents`, `disallowedTools`/`disallowed-tools`)
+- `tools` aceita lista YAML ou string separada por vírgula
+- nomes de tools em formato TitleCase/CLI (`Read`, `Write`, `Grep`, `Glob`, `LS`, etc.) são mapeados para ferramentas Omni equivalentes
+
 ## AgentOrchestrator (`@omni-agent/core`)
 
 `AgentOrchestrator` executa planos de tasks com:
@@ -47,5 +62,8 @@ Campos de task relevantes:
 - `.claude/skills`
 - `skills`
 - `plugins/**/skills`
+- `../*/plugins/**/skills` em repositórios irmãos (quando existir no workspace)
+
+Quando houver colisão de nome de skill entre plugins, o nome é desambiguado automaticamente com escopo (`nome@plugin`).
 
 `AgentManager` injeta automaticamente o contexto de skills declaradas no frontmatter do agente (`skills: [...]`) no system prompt do agente.

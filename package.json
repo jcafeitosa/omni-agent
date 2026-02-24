@@ -12,7 +12,7 @@
   ],
   "scripts": {
     "build": "npm run build -w @omni-agent/core && npm run build -w @omni-agent/providers && npm run build -w @omni-agent/tools && npm run build -w @omni-agent/cli && npm run build -w @omni-agent/webmcp",
-    "test": "npm run test -w @omni-agent/providers --if-present && npm run test -w @omni-agent/tools --if-present",
+    "test": "npm run test -w @omni-agent/core --if-present && npm run test -w @omni-agent/providers --if-present && npm run test -w @omni-agent/tools --if-present",
     "check": "npm run build && npm test",
     "lint": "npm run lint --workspaces --if-present",
     "clean": "npm run clean --workspaces --if-present",

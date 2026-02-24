@@ -40,6 +40,9 @@
 - concluido: AGENT-201 (execucao cross-process de task via `externalCommand`)
 - concluido: PLUGIN-201 (runtime de plugins com install/enable/disable/update e manifests)
 - concluido: PLUGIN-201 (semantica de frontmatter de skills: agent/context/allowed-tools/hooks/user-invocable)
+- concluido: CORE-102 (suite de testes do `@omni-agent/core` integrada ao `npm test` da raiz)
+- concluido: AGENT-201 (compatibilidade de frontmatter e ferramentas para agentes em formato CLI generico)
+- concluido: PLUGIN-201 (desambiguacao de skills por escopo `skill@scope` para evitar colisoes)
 
 ## P0 (bloqueante de sistema)
 

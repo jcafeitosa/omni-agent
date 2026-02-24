@@ -19,7 +19,7 @@ export interface PermissionResult {
 export type CanUseToolCallback = (toolName: string, input: any) => Promise<PermissionResult>;
 
 /**
- * Manages tool execution permissions, aligned with Claude Agent SDK.
+ * Manages tool execution permissions in a provider-agnostic way.
  */
 export class PermissionManager {
     private mode: PermissionMode;

@@ -97,8 +97,10 @@ export class SkillManager {
             if (existsSync(skillFile)) {
                 const parsed = parseSkillFile(skillFile);
                 if (parsed) {
-                    this.skills.set(parsed.name, {
+                    const uniqueName = this.toUniqueSkillName(parsed.name, skillFile);
+                    this.skills.set(uniqueName, {
                         ...parsed,
+                        name: uniqueName,
                         source: detectSource(skillFile),
                         referencesDir: existsSync(join(full, "references")) ? join(full, "references") : undefined,
                         scriptsDir: existsSync(join(full, "scripts")) ? join(full, "scripts") : undefined
@@ -109,6 +111,24 @@ export class SkillManager {
 
             this.scanDirectory(full);
         }
+    }
+
+    private toUniqueSkillName(baseName: string, filePath: string): string {
+        if (!this.skills.has(baseName)) {
+            return baseName;
+        }
+        const existing = this.skills.get(baseName);
+        if (existing?.filePath === filePath) {
+            return baseName;
+        }
+        const scope = inferScope(filePath);
+        let candidate = `${baseName}@${scope}`;
+        let index = 2;
+        while (this.skills.has(candidate)) {
+            candidate = `${baseName}@${scope}-${index}`;
+            index++;
+        }
+        return candidate;
     }
 }
 
@@ -152,13 +172,18 @@ function parseSkillFile(filePath: string): Omit<SkillDefinition, "source"> | nul
 function defaultSkillDirectories(): string[] {
     const cwd = process.cwd();
     const parent = resolve(cwd, "..");
+    const siblingPluginRoots = safeReadDir(parent)
+        .map((entry) => join(parent, entry, "plugins"))
+        .filter((dir) => existsSync(dir));
+    const siblingSkillRoots = safeReadDir(parent)
+        .map((entry) => join(parent, entry, "skills"))
+        .filter((dir) => existsSync(dir));
     const dirs = [
         join(cwd, ".claude", "skills"),
         join(cwd, "skills"),
         join(cwd, "plugins"),
-        join(parent, "skills"),
-        join(parent, "knowledge-work-plugins"),
-        join(parent, "claude-code", "plugins")
+        ...siblingSkillRoots,
+        ...siblingPluginRoots
     ];
     return dirs;
 }
@@ -198,11 +223,24 @@ function safeIsDirectory(path: string): boolean {
 }
 
 function normalizeStringArray(value: unknown): string[] | undefined {
-    if (!Array.isArray(value)) return undefined;
-    const normalized = value
-        .map((v) => String(v).trim())
-        .filter(Boolean);
-    return normalized.length > 0 ? normalized : undefined;
+    if (!value) return undefined;
+    const normalized = Array.isArray(value)
+        ? value.map((v) => String(v).trim())
+        : typeof value === "string"
+            ? value
+                  .split(",")
+                  .map((v) => v.trim().replace(/^["']|["']$/g, ""))
+            : [];
+    const list = normalized.filter(Boolean);
+    if (list.length === 0) return undefined;
+    return Array.from(new Set(list));
+}
+
+function inferScope(filePath: string): string {
+    const match = filePath.match(/\/plugins\/([^/]+)\//);
+    if (match?.[1]) return match[1];
+    const parts = filePath.split("/");
+    return parts.slice(-2, -1)[0] || "scope";
 }
 
 function normalizeHooks(value: unknown): Array<{ event: string; command: string; timeout?: number }> | undefined {
