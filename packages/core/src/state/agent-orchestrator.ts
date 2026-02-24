@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { AgentLoop } from "../loops/agent-loop.js";
 import { AgentManager } from "./agent-manager.js";
+import { AgentCommunicationHub, CommunicationRole, CommunicationChannel, ChannelType } from "./agent-communication.js";
 
 export interface TeamTask {
     id: string;
@@ -60,15 +61,59 @@ export interface TeamRunResult {
     sharedState: Record<string, string>;
 }
 
+export interface OrchestratorCommunicationPolicy {
+    hub: AgentCommunicationHub;
+    workspaceId: string;
+    mainChannelId: string;
+    orchestratorId: string;
+    requireMainChannelUpdates?: boolean;
+}
+
+export interface OrchestratedTeam {
+    id: string;
+    workspaceId: string;
+    mainChannelId: string;
+    teamChannelId: string;
+    participants: string[];
+    temporary: boolean;
+    createdAt: number;
+}
+
+export interface CreateTeamInput {
+    id: string;
+    participants: string[];
+    channelName?: string;
+    channelType?: Extract<ChannelType, "private" | "project" | "team">;
+    temporary?: boolean;
+}
+
+export interface OrchestratorCreateChannelInput {
+    name: string;
+    type: ChannelType;
+    isPrivate?: boolean;
+    team?: string;
+    department?: string;
+    participants?: string[];
+}
+
 export class AgentOrchestrator {
     private readonly manager: AgentManager;
     private readonly background = new Map<string, Promise<TeamTaskResult>>();
     private readonly tasks = new Map<string, ManagedTask>();
     private readonly cancellations = new Set<string>();
     private readonly sharedState = new Map<string, string>();
+    private communication?: OrchestratorCommunicationPolicy;
+    private readonly teams = new Map<string, OrchestratedTeam>();
 
     constructor(manager: AgentManager) {
         this.manager = manager;
+    }
+
+    public configureCommunication(policy: OrchestratorCommunicationPolicy): void {
+        this.communication = {
+            ...policy,
+            requireMainChannelUpdates: policy.requireMainChannelUpdates !== false
+        };
     }
 
     public async runPlan(plan: TeamPlan): Promise<TeamRunResult> {
@@ -171,8 +216,105 @@ export class AgentOrchestrator {
         return this.background.get(taskId);
     }
 
+    public createCommunicationChannel(input: OrchestratorCreateChannelInput): CommunicationChannel {
+        const policy = this.requireCommunicationPolicy();
+        this.ensureAgentReady(policy, policy.orchestratorId);
+        const channel = policy.hub.createChannel({
+            workspaceId: policy.workspaceId,
+            name: input.name,
+            type: input.type,
+            createdBy: policy.orchestratorId,
+            isPrivate: input.isPrivate,
+            team: input.team,
+            department: input.department
+        });
+        for (const participant of input.participants || []) {
+            this.ensureAgentReady(policy, participant);
+            policy.hub.addChannelMember(policy.workspaceId, channel.id, participant, policy.orchestratorId);
+        }
+        return channel;
+    }
+
+    public updateCommunicationChannel(
+        channelId: string,
+        patch: { name?: string; isPrivate?: boolean; team?: string; department?: string }
+    ): CommunicationChannel {
+        const policy = this.requireCommunicationPolicy();
+        return policy.hub.updateChannel({
+            workspaceId: policy.workspaceId,
+            channelId,
+            requestedBy: policy.orchestratorId,
+            ...patch
+        });
+    }
+
+    public deleteCommunicationChannel(channelId: string): void {
+        const policy = this.requireCommunicationPolicy();
+        policy.hub.deleteChannel(policy.workspaceId, channelId, policy.orchestratorId);
+        for (const [teamId, team] of this.teams.entries()) {
+            if (team.teamChannelId === channelId) this.teams.delete(teamId);
+        }
+    }
+
+    public createTeam(input: CreateTeamInput): OrchestratedTeam {
+        const policy = this.requireCommunicationPolicy();
+        if (this.teams.has(input.id)) {
+            throw new Error(`Team already exists: ${input.id}`);
+        }
+        const participants = Array.from(new Set(input.participants.map((value) => value.trim()).filter(Boolean)));
+        if (participants.length === 0) {
+            throw new Error("Team must have at least one participant.");
+        }
+        const teamChannel = this.createCommunicationChannel({
+            name: input.channelName || `team-${input.id}`,
+            type: input.channelType || "private",
+            isPrivate: true,
+            team: input.id,
+            participants
+        });
+        for (const participant of participants) {
+            this.ensureAgentReady(policy, participant);
+        }
+        const team: OrchestratedTeam = {
+            id: input.id,
+            workspaceId: policy.workspaceId,
+            mainChannelId: policy.mainChannelId,
+            teamChannelId: teamChannel.id,
+            participants,
+            temporary: input.temporary !== false,
+            createdAt: Date.now()
+        };
+        this.teams.set(input.id, team);
+        policy.hub.postMessage({
+            workspaceId: policy.workspaceId,
+            channelId: policy.mainChannelId,
+            senderId: policy.orchestratorId,
+            text: `[team_created] time ${input.id} criado. canal temporario: ${team.teamChannelId}. participantes: ${participants.join(", ")}`
+        });
+        return team;
+    }
+
+    public disbandTeam(teamId: string): void {
+        const policy = this.requireCommunicationPolicy();
+        const team = this.teams.get(teamId);
+        if (!team) throw new Error(`Unknown team: ${teamId}`);
+        policy.hub.deleteChannel(policy.workspaceId, team.teamChannelId, policy.orchestratorId);
+        this.teams.delete(teamId);
+        policy.hub.postMessage({
+            workspaceId: policy.workspaceId,
+            channelId: policy.mainChannelId,
+            senderId: policy.orchestratorId,
+            text: `[team_disbanded] time ${teamId} encerrado e canal ${team.teamChannelId} removido.`
+        });
+    }
+
+    public listTeams(): OrchestratedTeam[] {
+        return Array.from(this.teams.values()).sort((a, b) => b.createdAt - a.createdAt);
+    }
+
     private async executeTask(task: TeamTask): Promise<TeamTaskResult> {
         const started = Date.now();
+        await this.postTaskUpdate(task, "task_started", {});
         this.tasks.set(task.id, {
             id: task.id,
             status: task.background ? "background" : "running",
@@ -182,7 +324,7 @@ export class AgentOrchestrator {
 
         const run = async () => {
             if (this.cancellations.has(task.id)) {
-                return this.finalizeCancelled(task.id, started);
+                return await this.finalizeCancelled(task.id, started);
             }
             await this.emitHook("SubagentStart", {
                 task_id: task.id,
@@ -198,7 +340,7 @@ export class AgentOrchestrator {
                     ? await this.runExternalTask(task, queryWithContext)
                     : await agent.run(queryWithContext);
                 if (this.cancellations.has(task.id)) {
-                    return this.finalizeCancelled(task.id, started);
+                    return await this.finalizeCancelled(task.id, started);
                 }
                 const elapsedMs = Date.now() - started;
                 this.tasks.set(task.id, {
@@ -234,6 +376,7 @@ export class AgentOrchestrator {
                     agent_name: task.agentName,
                     idle: true
                 });
+                await this.postTaskUpdate(task, "task_completed", { elapsedMs, result });
                 return {
                     id: task.id,
                     success: true,
@@ -270,6 +413,7 @@ export class AgentOrchestrator {
                     elapsed_ms: elapsedMs,
                     error: message
                 });
+                await this.postTaskUpdate(task, "task_failed", { elapsedMs, error: message });
                 return {
                     id: task.id,
                     success: false,
@@ -294,7 +438,7 @@ export class AgentOrchestrator {
         return run();
     }
 
-    private finalizeCancelled(taskId: string, startedAt: number): TeamTaskResult {
+    private async finalizeCancelled(taskId: string, startedAt: number): Promise<TeamTaskResult> {
         const endedAt = Date.now();
         const elapsedMs = endedAt - startedAt;
         const previous = this.tasks.get(taskId);
@@ -323,6 +467,7 @@ export class AgentOrchestrator {
             elapsed_ms: elapsedMs,
             error: "Cancelled by user"
         });
+        await this.postTaskUpdate(previous?.task || { id: taskId, query: "" }, "task_cancelled", { elapsedMs });
         return {
             id: taskId,
             success: false,
@@ -449,4 +594,101 @@ export class AgentOrchestrator {
             });
         });
     }
+
+    private resolveTaskAgentId(task: TeamTask): string {
+        const raw = (task.agentName || `agent-${task.id}`).trim();
+        return raw.replace(/[^a-zA-Z0-9:_-]/g, "-");
+    }
+
+    private async postTaskUpdate(
+        task: TeamTask,
+        subtype: "task_started" | "task_completed" | "task_failed" | "task_cancelled",
+        options: {
+            elapsedMs?: number;
+            result?: string;
+            error?: string;
+        }
+    ): Promise<void> {
+        this.assertCommunicationPolicy();
+        const policy = this.communication!;
+        const senderId = this.resolveTaskAgentId(task);
+        this.ensureMainChannelExists(policy);
+        this.ensureAgentReady(policy, senderId);
+        const text = this.formatSlackStyleUpdate(task, subtype, senderId, options);
+
+        policy.hub.postMessage({
+            workspaceId: policy.workspaceId,
+            channelId: policy.mainChannelId,
+            senderId,
+            text,
+            metadata: {
+                subtype,
+                taskId: task.id,
+                orchestratorId: policy.orchestratorId,
+                agentId: senderId
+            }
+        });
+    }
+
+    private assertCommunicationPolicy(): void {
+        this.requireCommunicationPolicy();
+    }
+
+    private requireCommunicationPolicy(): OrchestratorCommunicationPolicy {
+        if (!this.communication) {
+            throw new Error(
+                "Mandatory communication policy not configured. Call configureCommunication() with workspace/main channel."
+            );
+        }
+        return this.communication;
+    }
+
+    private ensureMainChannelExists(policy: OrchestratorCommunicationPolicy): void {
+        const channel = policy.hub.listChannels(policy.workspaceId).find((item) => item.id === policy.mainChannelId);
+        if (!channel) {
+            throw new Error(`Main channel not found: ${policy.mainChannelId}`);
+        }
+    }
+
+    private ensureAgentReady(policy: OrchestratorCommunicationPolicy, agentId: string): void {
+        try {
+            policy.hub.listChannelsForAgent(policy.workspaceId, agentId);
+        } catch {
+            policy.hub.registerAgent(policy.workspaceId, {
+                id: agentId,
+                displayName: agentId,
+                role: "agent" as CommunicationRole
+            });
+        }
+        policy.hub.joinChannel(policy.workspaceId, policy.mainChannelId, agentId);
+    }
+
+    private formatSlackStyleUpdate(
+        task: TeamTask,
+        subtype: "task_started" | "task_completed" | "task_failed" | "task_cancelled",
+        senderId: string,
+        options: { elapsedMs?: number; result?: string; error?: string }
+    ): string {
+        const queryPreview = task.query?.trim() ? truncate(task.query.trim(), 140) : "sem query detalhada";
+        if (subtype === "task_started") {
+            return `[task_started] pessoal, ${senderId} pegou a task ${task.id}. foco agora: ${queryPreview}`;
+        }
+        if (subtype === "task_completed") {
+            const elapsed = options.elapsedMs !== undefined ? `${options.elapsedMs}ms` : "n/a";
+            const summary = options.result ? truncate(options.result.replace(/\s+/g, " "), 180) : "sem resumo";
+            return `[task_completed] update rapido: ${senderId} fechou ${task.id} em ${elapsed}. resultado: ${summary}`;
+        }
+        if (subtype === "task_failed") {
+            const elapsed = options.elapsedMs !== undefined ? `${options.elapsedMs}ms` : "n/a";
+            const error = options.error ? truncate(options.error, 180) : "erro nao informado";
+            return `[task_failed] alerta tecnico: ${senderId} falhou em ${task.id} (${elapsed}). erro: ${error}`;
+        }
+        const elapsed = options.elapsedMs !== undefined ? `${options.elapsedMs}ms` : "n/a";
+        return `[task_cancelled] ${senderId} cancelou ${task.id}. tempo gasto: ${elapsed}`;
+    }
+}
+
+function truncate(value: string, max = 160): string {
+    if (value.length <= max) return value;
+    return `${value.slice(0, Math.max(0, max - 3))}...`;
 }

@@ -16,10 +16,23 @@ export interface SkillDefinition {
     allowedTools?: string[];
     disallowedTools?: string[];
     hooks?: Array<{ event: string; command: string; timeout?: number }>;
+    compatibility?: string;
+    resources?: SkillResourceManifest;
 }
 
 export interface SkillManagerOptions {
     directories?: string[];
+}
+
+export interface SkillResourceFile {
+    path: string;
+    bytes?: number;
+}
+
+export interface SkillResourceManifest {
+    references: SkillResourceFile[];
+    scripts: SkillResourceFile[];
+    assets: SkillResourceFile[];
 }
 
 export class SkillManager {
@@ -103,7 +116,8 @@ export class SkillManager {
                         name: uniqueName,
                         source: detectSource(skillFile),
                         referencesDir: existsSync(join(full, "references")) ? join(full, "references") : undefined,
-                        scriptsDir: existsSync(join(full, "scripts")) ? join(full, "scripts") : undefined
+                        scriptsDir: existsSync(join(full, "scripts")) ? join(full, "scripts") : undefined,
+                        resources: buildSkillResourceManifest(full)
                     });
                 }
                 continue;
@@ -151,7 +165,8 @@ function parseSkillFile(filePath: string): Omit<SkillDefinition, "source"> | nul
                 userInvocable: frontmatter?.["user-invocable"] === false ? false : true,
                 allowedTools: normalizeStringArray(frontmatter?.["allowed-tools"]),
                 disallowedTools: normalizeStringArray(frontmatter?.["disallowed-tools"]),
-                hooks: normalizeHooks(frontmatter?.hooks)
+                hooks: normalizeHooks(frontmatter?.hooks),
+                compatibility: normalizeCompatibility(frontmatter?.compatibility)
             };
         }
         if (!name) {
@@ -167,6 +182,61 @@ function parseSkillFile(filePath: string): Omit<SkillDefinition, "source"> | nul
     } catch {
         return null;
     }
+}
+
+function normalizeCompatibility(value: unknown): string | undefined {
+    if (!value) return undefined;
+    if (typeof value === "string") {
+        const normalized = value.trim();
+        return normalized || undefined;
+    }
+    if (Array.isArray(value)) {
+        const parts = value.map((v) => String(v).trim()).filter(Boolean);
+        return parts.length ? parts.join(", ") : undefined;
+    }
+    if (typeof value === "object") {
+        const entries = Object.entries(value as Record<string, unknown>)
+            .map(([k, v]) => `${k}=${String(v)}`)
+            .join(", ");
+        return entries || undefined;
+    }
+    return undefined;
+}
+
+function buildSkillResourceManifest(skillDir: string): SkillResourceManifest {
+    return {
+        references: scanResourceDir(join(skillDir, "references"), skillDir),
+        scripts: scanResourceDir(join(skillDir, "scripts"), skillDir),
+        assets: scanResourceDir(join(skillDir, "assets"), skillDir)
+    };
+}
+
+function scanResourceDir(dirPath: string, skillDir: string): SkillResourceFile[] {
+    if (!existsSync(dirPath)) return [];
+    const out: SkillResourceFile[] = [];
+    const queue = [dirPath];
+    while (queue.length > 0) {
+        const current = queue.shift()!;
+        const entries = safeReadDir(current);
+        for (const entry of entries) {
+            const full = join(current, entry);
+            if (safeIsDirectory(full)) {
+                queue.push(full);
+                continue;
+            }
+            try {
+                const stat = lstatSync(full);
+                if (!stat.isFile()) continue;
+                out.push({
+                    path: full.replace(`${skillDir}/`, ""),
+                    bytes: stat.size
+                });
+            } catch {
+                // skip inaccessible entries
+            }
+        }
+    }
+    return out.sort((a, b) => a.path.localeCompare(b.path));
 }
 
 function defaultSkillDirectories(): string[] {

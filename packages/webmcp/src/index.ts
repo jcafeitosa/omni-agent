@@ -15,7 +15,7 @@
 import * as http from "node:http";
 import { randomUUID } from "node:crypto";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { ToolDefinition } from "@omni-agent/core";
+import { AgentCommunicationRealtimeGateway, ToolDefinition } from "@omni-agent/core";
 
 export interface WebMcpServerOptions {
     port?: number;
@@ -24,6 +24,7 @@ export interface WebMcpServerOptions {
     serverVersion?: string;
     resources?: Array<{ uri: string; name?: string; description?: string; mimeType?: string; text?: string }>;
     prompts?: Array<{ name: string; description?: string; arguments?: Array<{ name: string; required?: boolean; description?: string }>; template?: string }>;
+    communicationGateway?: AgentCommunicationRealtimeGateway;
 }
 
 interface SseClient {
@@ -51,6 +52,7 @@ export class WebMcpServer {
     private serverVersion: string;
     private resources: Array<{ uri: string; name?: string; description?: string; mimeType?: string; text?: string }>;
     private prompts: Array<{ name: string; description?: string; arguments?: Array<{ name: string; required?: boolean; description?: string }>; template?: string }>;
+    private communicationGateway?: AgentCommunicationRealtimeGateway;
 
     constructor(options: WebMcpServerOptions) {
         this.tools = options.tools;
@@ -58,6 +60,7 @@ export class WebMcpServer {
         this.serverVersion = options.serverVersion ?? "1.0.0";
         this.resources = options.resources ?? [];
         this.prompts = options.prompts ?? [];
+        this.communicationGateway = options.communicationGateway;
         this.server = http.createServer(this.handleRequest.bind(this));
     }
 
@@ -257,6 +260,13 @@ export class WebMcpServer {
             return this.sendJson(res, 200, { status: "ok", tools: this.tools.size });
         }
 
+        // ── GET /comm/health ─────────────────────────────────────────────────
+        if (req.method === "GET" && url.pathname === "/comm/health") {
+            return this.sendJson(res, 200, {
+                status: this.communicationGateway ? "ok" : "disabled"
+            });
+        }
+
         // ── GET /tools ────────────────────────────────────────────────────────
         if (req.method === "GET" && url.pathname === "/tools") {
             return this.sendJson(res, 200, { tools: this.buildToolList() });
@@ -281,6 +291,19 @@ export class WebMcpServer {
                 clearInterval(ka);
                 this.clients.delete(clientId);
             });
+            return;
+        }
+
+        // ── GET /comm/events — communication SSE stream ─────────────────────
+        if (req.method === "GET" && url.pathname === "/comm/events") {
+            if (!this.communicationGateway) {
+                return this.sendJson(res, 404, {
+                    error: "Communication gateway not configured"
+                });
+            }
+            const workspaceId = url.searchParams.get("workspaceId") || undefined;
+            const channelId = url.searchParams.get("channelId") || undefined;
+            this.communicationGateway.attachSseClient(req, res, { workspaceId, channelId });
             return;
         }
 

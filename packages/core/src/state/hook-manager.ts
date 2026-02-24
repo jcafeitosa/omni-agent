@@ -1,6 +1,7 @@
 import { spawn } from "child_process";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
+import { HookRuleEngine } from "./hook-rule-engine.js";
 
 export interface HookDefinition {
     type: "command";
@@ -15,6 +16,7 @@ export interface HooksJson {
 
 export interface HookManagerOptions {
     cwd: string;
+    ruleDirectories?: string[];
 }
 
 export type HookEventPayload = Record<string, any>;
@@ -27,9 +29,16 @@ export type HookEventPayload = Record<string, any>;
 export class HookManager {
     private cwd: string;
     private hooksConfig: HooksJson = { hooks: {} };
+    private readonly ruleEngine: HookRuleEngine;
 
     constructor(options: HookManagerOptions) {
         this.cwd = options.cwd;
+        this.ruleEngine = new HookRuleEngine({
+            rulesDirectories: options.ruleDirectories || [
+                join(options.cwd, ".omniagent", "hooks"),
+                join(options.cwd, ".claude")
+            ]
+        });
     }
 
     public registerCommandHook(eventName: string, command: string, timeout?: number): void {
@@ -73,9 +82,23 @@ export class HookManager {
      * Returns a merged object of all stdout JSON outputs.
      */
     async emit(eventName: string, payload: HookEventPayload): Promise<HookEventPayload> {
+        const ruleContext = buildRuleContext(eventName, payload);
+        const rules = this.ruleEngine.loadRules(String(ruleContext.event_name || eventName));
+        const ruleResult = this.ruleEngine.evaluate(rules, ruleContext);
+        if (ruleResult.blocked) {
+            return {
+                ...payload,
+                block: true,
+                reason: ruleResult.blockReason || "Blocked by hook rule."
+            };
+        }
+
+        let warningMessage = ruleResult.warnings.join("\n\n");
         const hookGroups = this.hooksConfig.hooks[eventName];
         if (!hookGroups || hookGroups.length === 0) {
-            return payload; // No hooks registered for this event
+            return warningMessage
+                ? { ...payload, systemMessage: warningMessage }
+                : payload; // No hooks registered for this event
         }
 
         let currentPayload = { ...payload };
@@ -94,6 +117,11 @@ export class HookManager {
                     }
                 }
             }
+        }
+
+        if (warningMessage) {
+            const existing = currentPayload.systemMessage ? String(currentPayload.systemMessage) : "";
+            currentPayload.systemMessage = existing ? `${existing}\n\n${warningMessage}` : warningMessage;
         }
 
         return currentPayload;
@@ -165,4 +193,24 @@ export class HookManager {
             child.stdin?.end();
         });
     }
+}
+
+function buildRuleContext(eventName: string, payload: HookEventPayload): Record<string, unknown> {
+    const toolName = String(payload.tool_name || payload.tool || payload.toolName || "");
+    const toolInput = (payload.tool_input || payload.args || payload.toolInput || {}) as Record<string, unknown>;
+    return {
+        event_name: normalizeHookEvent(eventName),
+        tool_name: toolName,
+        tool_input: toolInput,
+        reason: payload.reason,
+        transcript: payload.transcript
+    };
+}
+
+function normalizeHookEvent(eventName: string): string {
+    const normalized = String(eventName || "").trim().toLowerCase();
+    if (normalized === "pretooluse") return "pre_tool_use";
+    if (normalized === "posttooluse") return "post_tool_use";
+    if (normalized === "userpromptsubmit") return "user_prompt_submit";
+    return normalized;
 }

@@ -45,3 +45,38 @@ Skill B
     }
 });
 
+test("skill manager builds resource manifest and parses compatibility", () => {
+    const root = mkdtempSync(join(tmpdir(), "omni-skill-manager-resources-"));
+    const skillDir = join(root, "skills", "analyzer");
+    mkdirSync(join(skillDir, "scripts"), { recursive: true });
+    mkdirSync(join(skillDir, "references"), { recursive: true });
+    mkdirSync(join(skillDir, "assets"), { recursive: true });
+    writeFileSync(
+        join(skillDir, "SKILL.md"),
+        `---
+name: analyzer
+description: test analyzer
+compatibility:
+  target: omni-agent
+  runtime: node
+---
+Use scripts first.
+`
+    );
+    writeFileSync(join(skillDir, "scripts", "run.sh"), "#!/usr/bin/env bash\necho ok\n");
+    writeFileSync(join(skillDir, "references", "guide.md"), "# Guide\n");
+    writeFileSync(join(skillDir, "assets", "template.txt"), "template\n");
+
+    try {
+        const manager = new SkillManager({ directories: [join(root, "skills")] });
+        const skills = manager.loadAll();
+        const skill = skills.find((s) => s.name === "analyzer");
+        assert.ok(skill);
+        assert.match(String(skill?.compatibility || ""), /target=omni-agent/);
+        assert.equal(skill?.resources?.scripts.some((r) => r.path === "scripts/run.sh"), true);
+        assert.equal(skill?.resources?.references.some((r) => r.path === "references/guide.md"), true);
+        assert.equal(skill?.resources?.assets.some((r) => r.path === "assets/template.txt"), true);
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});

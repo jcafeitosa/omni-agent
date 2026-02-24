@@ -566,13 +566,28 @@ test("agent loop persists events using event log store", async () => {
             session: new AgentSession({ systemPrompt: "test" }),
             provider,
             tools: new Map(),
-            eventLogStore
+            eventLogStore,
+            activatedSkills: [
+                {
+                    name: "writer-skill",
+                    description: "writer",
+                    filePath: "/tmp/skill/SKILL.md",
+                    content: "Use scripts first.",
+                    source: "project",
+                    resources: {
+                        scripts: [{ path: "scripts/run.sh", bytes: 42 }],
+                        references: [{ path: "references/guide.md", bytes: 128 }],
+                        assets: []
+                    }
+                }
+            ]
         });
 
         const result = await loop.run("go");
         assert.equal(result, "done");
         const content = await readFile(filePath, "utf8");
         assert.equal(content.includes('"type":"turn_started"'), true);
+        assert.equal(content.includes('"type":"skill_runtime_activated"'), true);
         assert.equal(content.includes('"type":"assistant_text"'), true);
         assert.equal(content.includes('"type":"turn_completed"'), true);
     } finally {

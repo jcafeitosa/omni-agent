@@ -30,6 +30,7 @@ import { parseStructuredResult } from "../helpers/structured-result.js";
 import { EventLogStore } from "../state/event-log-store.js";
 import { OTelLiteManager } from "../events/otel-lite.js";
 import { parsePlanUpdatePayload, parseRequestUserInputPayload } from "../events/protocol-events.js";
+import type { SkillDefinition } from "../state/skill-manager.js";
 
 interface AgentLoopOptions {
     session: AgentSession;
@@ -58,6 +59,7 @@ interface AgentLoopOptions {
     toolRunnerMode?: "standard" | "provider_native";
     eventLogStore?: EventLogStore;
     otelManager?: OTelLiteManager;
+    activatedSkills?: SkillDefinition[];
 }
 
 /**
@@ -106,6 +108,7 @@ export class AgentLoop {
     private readonly toolRunnerMode: "standard" | "provider_native";
     private readonly eventLogStore?: EventLogStore;
     private readonly otelManager?: OTelLiteManager;
+    private readonly activatedSkills: SkillDefinition[];
 
     constructor(options: AgentLoopOptions) {
         this.session = options.session;
@@ -126,6 +129,7 @@ export class AgentLoop {
         this.toolRunnerMode = options.toolRunnerMode || "standard";
         this.eventLogStore = options.eventLogStore;
         this.otelManager = options.otelManager;
+        this.activatedSkills = options.activatedSkills || [];
 
         if (this.policyEngine && !options.permissionManager) {
             this.permissionManager.setPolicyEngine(this.policyEngine);
@@ -161,6 +165,11 @@ export class AgentLoop {
         if (constitution) {
             const currentPrompt = this.session.getSystemPrompt();
             this.session.setSystemPrompt(`${currentPrompt}\n\nProject Constitution (CLAUDE.md):\n${constitution}`);
+        }
+        const bootstrap = this.contextLoader.loadBootstrapContext(this.workingDirectory);
+        if (bootstrap) {
+            const currentPrompt = this.session.getSystemPrompt();
+            this.session.setSystemPrompt(`${currentPrompt}\n\nWorkspace Bootstrap Context:\n${bootstrap}`);
         }
     }
 
@@ -399,6 +408,22 @@ export class AgentLoop {
         this.isInterrupted = false;
         let didEmitTerminalResult = false;
         this.session.addMessage({ role: "user", text: input, content: input, uuid: randomUUID() });
+        if (this.activatedSkills.length > 0) {
+            void this.eventLogStore?.append({
+                ts: Date.now(),
+                type: "skill_runtime_activated",
+                payload: {
+                    count: this.activatedSkills.length,
+                    skills: this.activatedSkills.map((skill) => ({
+                        name: skill.name,
+                        source: skill.source,
+                        references: skill.resources?.references.length || 0,
+                        scripts: skill.resources?.scripts.length || 0,
+                        assets: skill.resources?.assets.length || 0
+                    }))
+                }
+            });
+        }
 
         const bubbledEvents: SDKEvent[] = [];
         const onStatus = (data: any) => {

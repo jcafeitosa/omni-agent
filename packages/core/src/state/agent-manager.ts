@@ -9,7 +9,7 @@ import { PolicyEngine, PolicyRule } from "./policy-engine.js";
 import { ManagedPolicyHierarchy, ManagedPolicyBundle } from "./managed-policy.js";
 import { PermissionManager, PermissionMode } from "./permissions.js";
 import { SkillManager } from "./skill-manager.js";
-import { AgentOrchestrator } from "./agent-orchestrator.js";
+import { AgentOrchestrator, OrchestratorCommunicationPolicy } from "./agent-orchestrator.js";
 import { HookManager } from "./hook-manager.js";
 import { PluginManager } from "./plugin-manager.js";
 import { WorktreeManager } from "./worktree-manager.js";
@@ -275,7 +275,8 @@ export class AgentManager {
             permissionManager,
             hookManager: this.hookManager,
             agentManager: this,
-            workingDirectory: runtimeOptions.workingDirectory
+            workingDirectory: runtimeOptions.workingDirectory,
+            activatedSkills: skillBundle.skills
         });
     }
 
@@ -294,9 +295,12 @@ export class AgentManager {
         }));
     }
 
-    public createOrchestrator(): AgentOrchestrator {
+    public createOrchestrator(communicationPolicy?: OrchestratorCommunicationPolicy): AgentOrchestrator {
         if (!this.orchestrator) {
             this.orchestrator = new AgentOrchestrator(this);
+        }
+        if (communicationPolicy) {
+            this.orchestrator.configureCommunication(communicationPolicy);
         }
         return this.orchestrator;
     }
@@ -327,11 +331,31 @@ export class AgentManager {
             .resolveSkills(skillNames)
             .filter((skill) => !skill.agent || skill.agent === agentName);
         if (resolved.length === 0) return { context: "", skills: [] };
+
         const context = [
-            "Loaded Skills Context:",
+            "Loaded Skills Runtime Context:",
+            "Use progressive disclosure: load only needed references; prefer bundled scripts as black-box executables before reading large source files.",
             ...resolved.map((skill) => {
                 const mode = skill.context === "fork" ? "forked-context" : "inherited-context";
-                return `- [${skill.name}] (${mode}) ${skill.description || ""}\n${skill.content}`.trim();
+                const refs = skill.resources?.references || [];
+                const scripts = skill.resources?.scripts || [];
+                const assets = skill.resources?.assets || [];
+                const referencesPreview = refs.slice(0, 6).map((r) => r.path).join(", ");
+                const scriptsPreview = scripts.slice(0, 6).map((r) => r.path).join(", ");
+                return [
+                    `- [${skill.name}] (${mode}) source=${skill.source}${skill.description ? `: ${skill.description}` : ""}`,
+                    skill.compatibility ? `  compatibility: ${skill.compatibility}` : undefined,
+                    scripts.length > 0
+                        ? `  scripts (${scripts.length}): ${scriptsPreview}${scripts.length > 6 ? ", ..." : ""}`
+                        : "  scripts: none",
+                    refs.length > 0
+                        ? `  references (${refs.length}): ${referencesPreview}${refs.length > 6 ? ", ..." : ""}`
+                        : "  references: none",
+                    assets.length > 0 ? `  assets (${assets.length})` : "  assets: none",
+                    `  instructions-preview:\n${indentBlock(previewSkillContent(skill.content, 1200), 4)}`
+                ]
+                    .filter(Boolean)
+                    .join("\n");
             })
         ].join("\n\n");
         return { context, skills: resolved };
@@ -427,6 +451,20 @@ export class AgentManager {
 
 function dedupe(items: string[]): string[] {
     return Array.from(new Set(items.filter(Boolean)));
+}
+
+function previewSkillContent(content: string, maxChars: number): string {
+    const normalized = content.trim();
+    if (normalized.length <= maxChars) return normalized;
+    return `${normalized.slice(0, maxChars).trimEnd()}\n...[truncated for progressive loading]`;
+}
+
+function indentBlock(text: string, spaces: number): string {
+    const pad = " ".repeat(spaces);
+    return text
+        .split("\n")
+        .map((line) => `${pad}${line}`)
+        .join("\n");
 }
 
 function normalizeToolsList(value: unknown): string[] | undefined {
