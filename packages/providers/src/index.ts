@@ -10,3 +10,4 @@ export * from "./utils/model-limits.js";
 export * from "./registry.js";
 export * from "./oauth/index.js";
 export * from "./model-manager.js";
+export * from "./routing.js";

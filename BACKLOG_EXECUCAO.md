@@ -21,6 +21,7 @@
 - concluido: ARCH-301 (mapeamento multi-repo e gap analysis consolidado em `MAPEAMENTO_MULTI_REPOS_FUNCIONALIDADES.md`)
 - concluido parcial: DEVOPS-201 (Release GitHub automatizado com artifacts por tag)
 - pendente: DEVOPS-202 (publicacao em GitHub Packages bloqueada por mismatch de scope `@omni-agent/*` x owner `jcafeitosa`)
+- concluido parcial: ROUTE-001 (roteador `ModelRouter` com fallback provider/modelo + integracao de cooldown)
 
 ## P0 (bloqueante de sistema)
 
