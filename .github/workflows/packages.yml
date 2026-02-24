@@ -41,10 +41,14 @@ jobs:
         run: npm run build
 
       - name: Publish to npmjs
-        if: ${{ secrets.NPM_TOKEN != '' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: node ./scripts/publish-workspaces.mjs --registry=https://registry.npmjs.org --access=public --provenance
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "NPM_TOKEN not configured; skipping npmjs publish."
+            exit 0
+          fi
+          node ./scripts/publish-workspaces.mjs --registry=https://registry.npmjs.org --access=public --provenance
 
   publish-github-packages:
     if: ${{ github.event_name == 'release' || github.event.inputs.registry == 'github' || github.event.inputs.registry == 'both' }}
