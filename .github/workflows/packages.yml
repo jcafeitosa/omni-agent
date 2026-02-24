@@ -17,7 +17,7 @@ on:
 
 jobs:
   publish-npm:
-    if: ${{ (github.event_name == 'release' || github.event.inputs.registry == 'npm' || github.event.inputs.registry == 'both') && secrets.NPM_TOKEN != '' }}
+    if: ${{ github.event_name == 'release' || github.event.inputs.registry == 'npm' || github.event.inputs.registry == 'both' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -41,6 +41,7 @@ jobs:
         run: npm run build
 
       - name: Publish to npmjs
+        if: ${{ secrets.NPM_TOKEN != '' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: node ./scripts/publish-workspaces.mjs --registry=https://registry.npmjs.org --access=public --provenance
