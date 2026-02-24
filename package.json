@@ -27,7 +27,7 @@
     "ops:export-analytics": "node ./scripts/export-analytics.mjs"
   },
   "devDependencies": {
-    "@types/glob": "^8.1.0",
+    "@types/glob": "^9.0.0",
     "typescript": "^5.4.0",
     "zod": "^3.25.76"
   },
