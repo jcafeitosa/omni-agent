@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync, watch, FSWatcher } from "node:fs";
 import { join, resolve } from "node:path";
 import * as yaml from "js-yaml";
 
@@ -19,6 +19,7 @@ export interface SkillManagerOptions {
 export class SkillManager {
     private readonly directories: string[];
     private readonly skills = new Map<string, SkillDefinition>();
+    private readonly watchers: FSWatcher[] = [];
 
     constructor(options: SkillManagerOptions = {}) {
         this.directories = dedupe(
@@ -38,6 +39,33 @@ export class SkillManager {
 
     public listSkills(): SkillDefinition[] {
         return Array.from(this.skills.values());
+    }
+
+    public startWatch(): void {
+        this.stopWatch();
+        for (const dir of this.directories) {
+            try {
+                const w = watch(dir, { recursive: true }, (_eventType, filename) => {
+                    if (!filename) return;
+                    if (!filename.toString().endsWith("SKILL.md")) return;
+                    this.loadAll();
+                });
+                this.watchers.push(w);
+            } catch {
+                // ignore watcher failures for unsupported filesystems
+            }
+        }
+    }
+
+    public stopWatch(): void {
+        while (this.watchers.length > 0) {
+            const w = this.watchers.pop();
+            try {
+                w?.close();
+            } catch {
+                // ignore
+            }
+        }
     }
 
     public getSkill(name: string): SkillDefinition | undefined {

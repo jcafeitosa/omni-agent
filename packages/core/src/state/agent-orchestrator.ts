@@ -175,6 +175,12 @@ export class AgentOrchestrator {
             if (this.cancellations.has(task.id)) {
                 return this.finalizeCancelled(task.id, started);
             }
+            await this.emitHook("SubagentStart", {
+                task_id: task.id,
+                agent_name: task.agentName,
+                query: task.query,
+                background: Boolean(task.background)
+            });
             try {
                 const agent = this.createTaskAgent(task);
                 const queryWithContext = this.buildCollaborativeQuery(task);
@@ -194,6 +200,25 @@ export class AgentOrchestrator {
                     task
                 });
                 this.sharedState.set(task.id, result);
+                await this.emitHook("TaskCompleted", {
+                    task_id: task.id,
+                    agent_name: task.agentName,
+                    success: true,
+                    elapsed_ms: elapsedMs,
+                    result
+                });
+                await this.emitHook("SubagentStop", {
+                    task_id: task.id,
+                    agent_name: task.agentName,
+                    success: true,
+                    elapsed_ms: elapsedMs,
+                    last_assistant_message: result
+                });
+                await this.emitHook("TeammateIdle", {
+                    task_id: task.id,
+                    agent_name: task.agentName,
+                    idle: true
+                });
                 return {
                     id: task.id,
                     success: true,
@@ -202,6 +227,7 @@ export class AgentOrchestrator {
                 };
             } catch (error: any) {
                 const elapsedMs = Date.now() - started;
+                const message = error?.message || String(error);
                 this.tasks.set(task.id, {
                     id: task.id,
                     status: "failed",
@@ -209,14 +235,28 @@ export class AgentOrchestrator {
                     endedAt: Date.now(),
                     elapsedMs,
                     success: false,
-                    error: error?.message || String(error),
-                    result: error?.message || String(error),
+                    error: message,
+                    result: message,
                     task
+                });
+                await this.emitHook("TaskCompleted", {
+                    task_id: task.id,
+                    agent_name: task.agentName,
+                    success: false,
+                    elapsed_ms: elapsedMs,
+                    error: message
+                });
+                await this.emitHook("SubagentStop", {
+                    task_id: task.id,
+                    agent_name: task.agentName,
+                    success: false,
+                    elapsed_ms: elapsedMs,
+                    error: message
                 });
                 return {
                     id: task.id,
                     success: false,
-                    result: error?.message || String(error),
+                    result: message,
                     elapsedMs
                 };
             }
@@ -251,6 +291,18 @@ export class AgentOrchestrator {
             error: "Cancelled by user",
             result: previous?.result || "Cancelled by user",
             task: previous?.task || { id: taskId, query: "" }
+        });
+        void this.emitHook("TaskCompleted", {
+            task_id: taskId,
+            success: false,
+            elapsed_ms: elapsedMs,
+            error: "Cancelled by user"
+        });
+        void this.emitHook("SubagentStop", {
+            task_id: taskId,
+            success: false,
+            elapsed_ms: elapsedMs,
+            error: "Cancelled by user"
         });
         return {
             id: taskId,
@@ -292,5 +344,15 @@ export class AgentOrchestrator {
         const note = task.collaborationNote ? `Collaboration note:\n${task.collaborationNote}` : "";
         const sections = [note, depContext, `Task:\n${task.query}`].filter(Boolean);
         return sections.join("\n\n");
+    }
+
+    private async emitHook(eventName: string, payload: Record<string, unknown>): Promise<void> {
+        const hookManager = this.manager.getHookManager?.();
+        if (!hookManager) return;
+        try {
+            await hookManager.emit(eventName, payload);
+        } catch {
+            // hooks are non-blocking for task orchestration
+        }
     }
 }

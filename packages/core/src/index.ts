@@ -46,7 +46,7 @@ export interface ToolDefinition<T = any> {
     name: string;
     description: string;
     parameters: z.ZodType<T>;
-    execute: (args: T, context?: { sandbox?: Sandbox }) => Promise<string>;
+    execute: (args: T, context?: { sandbox?: Sandbox; loop?: unknown; workingDirectory?: string }) => Promise<string>;
 }
 
 export interface ProviderResponse {

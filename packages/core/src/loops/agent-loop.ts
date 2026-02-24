@@ -125,6 +125,10 @@ export class AgentLoop {
         }
     }
 
+    public getAgentName(): string | undefined {
+        return this.agentName;
+    }
+
     /**
      * Executes the agent loop synchronously (blocking until final text)
      */
@@ -419,7 +423,11 @@ export class AgentLoop {
                         }
 
                         yield { type: 'status', subtype: 'progress', message: `Executing ${call.name}...`, uuid: randomUUID() };
-                        const result = await tool.execute(argsToUse, { sandbox: this.sandbox });
+                        const result = await tool.execute(argsToUse, {
+                            sandbox: this.sandbox,
+                            loop: this,
+                            workingDirectory: process.cwd()
+                        });
 
                         let finalResult = result;
                         if (this.hookManager) {

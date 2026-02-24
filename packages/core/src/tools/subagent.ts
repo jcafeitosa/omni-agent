@@ -34,9 +34,10 @@ export function subagentTool(agentManager: AgentManager): ToolDefinition {
                 }))
             }).optional().describe("Optional multi-agent plan with dependency orchestration")
         }),
-        execute: async ({ action = "run", query, taskId, agentName, customDefinition, teamPlan }) => {
+        execute: async ({ action = "run", query, taskId, agentName, customDefinition, teamPlan }, context: any) => {
             const resolvedQuery = query || "";
             const orchestrator = agentManager.createOrchestrator();
+            const parentAgentName = context?.loop?.getAgentName?.();
 
             if (action === "list") {
                 return JSON.stringify(orchestrator.listTasks(), null, 2);
@@ -69,6 +70,9 @@ export function subagentTool(agentManager: AgentManager): ToolDefinition {
 
             if (action === "start") {
                 if (!taskId) throw new Error("taskId is required for action=start");
+                if (agentName && !agentManager.canSpawnSubagent(parentAgentName, agentName)) {
+                    throw new Error(`Agent '${parentAgentName}' is not allowed to spawn '${agentName}'.`);
+                }
                 const task = {
                     id: taskId,
                     query: resolvedQuery,
@@ -82,6 +86,10 @@ export function subagentTool(agentManager: AgentManager): ToolDefinition {
 
             if (!agentName && !customDefinition) {
                 throw new Error("Either agentName or customDefinition must be provided to spawn a subagent.");
+            }
+
+            if (agentName && !agentManager.canSpawnSubagent(parentAgentName, agentName)) {
+                throw new Error(`Agent '${parentAgentName}' is not allowed to spawn '${agentName}'.`);
             }
 
             const definition = agentName || customDefinition;

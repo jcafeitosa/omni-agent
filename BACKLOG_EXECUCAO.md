@@ -33,6 +33,9 @@
 - concluido parcial: AGENT-101 (orquestracao de tasks com dependencias/paralelo/background no `AgentOrchestrator`)
 - concluido parcial: AGENT-201 (gerenciamento de subagentes via `subagent` com acoes `start/status/list/cancel/wait/plan`)
 - concluido parcial: PLUGIN-201 (carregamento e injecao de contexto de skills via `SkillManager`)
+- concluido parcial: AGENT-101 (estado compartilhado colaborativo entre tasks + handoff por dependencias)
+- concluido parcial: AGENT-201 (restricao de spawn por `allowedAgents` e eventos de ciclo de vida de subagentes/tasks)
+- concluido parcial: PLUGIN-201 (hot-reload de skills e descoberta multi-diretorio)
 
 ## P0 (bloqueante de sistema)
 

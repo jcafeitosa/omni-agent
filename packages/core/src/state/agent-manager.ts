@@ -1,5 +1,6 @@
-import { readFileSync, readdirSync, lstatSync } from "fs";
+import { readFileSync, readdirSync, lstatSync, existsSync } from "fs";
 import { join } from "path";
+import os from "node:os";
 import * as yaml from "js-yaml";
 import { AgentSession } from "./session.js";
 import { AgentLoop } from "../loops/agent-loop.js";
@@ -8,6 +9,7 @@ import { PolicyEngine, PolicyRule } from "./policy-engine.js";
 import { PermissionManager, PermissionMode } from "./permissions.js";
 import { SkillManager } from "./skill-manager.js";
 import { AgentOrchestrator } from "./agent-orchestrator.js";
+import { HookManager } from "./hook-manager.js";
 
 export interface AgentDefinition {
     description: string;
@@ -23,6 +25,7 @@ export interface AgentDefinition {
     isolation?: "none" | "worktree";
     permissionMode?: PermissionMode;
     allowedAgents?: string[];
+    memory?: "user" | "project" | "local";
 }
 
 export interface AgentManifest extends Partial<AgentDefinition> {
@@ -41,6 +44,7 @@ export interface AgentManagerOptions {
     defaultModelConfig?: { provider: string; model: string };
     skillDirectories?: string[];
     autoLoadSkills?: boolean;
+    hookManager?: HookManager;
 }
 
 /**
@@ -55,6 +59,7 @@ export class AgentManager {
     private readonly skillManager: SkillManager;
     private readonly autoLoadSkills: boolean;
     private orchestrator?: AgentOrchestrator;
+    private readonly hookManager?: HookManager;
 
     constructor(options: AgentManagerOptions) {
         this.providers = options.providers;
@@ -62,8 +67,10 @@ export class AgentManager {
         this.defaultModelConfig = options.defaultModelConfig;
         this.skillManager = new SkillManager({ directories: options.skillDirectories });
         this.autoLoadSkills = options.autoLoadSkills !== false;
+        this.hookManager = options.hookManager;
         if (this.autoLoadSkills) {
             this.skillManager.loadAll();
+            this.skillManager.startWatch();
         }
     }
 
@@ -141,6 +148,7 @@ export class AgentManager {
         let policies: PolicyRule[] | undefined;
         let skills: string[] | undefined;
         let permissionMode: PermissionMode | undefined;
+        let memoryScope: "user" | "project" | "local" | undefined;
 
         if (typeof nameOrDef === "string") {
             const def = this.definitions.get(nameOrDef);
@@ -157,6 +165,7 @@ export class AgentManager {
             policies = manifest.policies;
             skills = manifest.skills;
             permissionMode = manifest.permissionMode;
+            memoryScope = (manifest as any).memory as any;
         } else {
             manifest = { name: "Subagent", ...nameOrDef };
             systemPrompt = nameOrDef.prompt;
@@ -168,10 +177,12 @@ export class AgentManager {
             policies = nameOrDef.policies;
             skills = nameOrDef.skills;
             permissionMode = nameOrDef.permissionMode;
+            memoryScope = (nameOrDef as any).memory as any;
         }
 
         const skillContext = this.resolveSkillsContext(skills || []);
-        const finalPrompt = skillContext ? `${systemPrompt}\n\n${skillContext}` : systemPrompt;
+        const memoryContext = this.resolveMemoryContext(memoryScope);
+        const finalPrompt = [systemPrompt, memoryContext, skillContext].filter(Boolean).join("\n\n");
         const session = new AgentSession({ systemPrompt: finalPrompt });
 
         // Resolve Provider
@@ -216,6 +227,7 @@ export class AgentManager {
             agentName: manifest.name,
             policyEngine,
             permissionManager,
+            hookManager: this.hookManager,
             agentManager: this
         });
     }
@@ -242,6 +254,18 @@ export class AgentManager {
         return this.orchestrator;
     }
 
+    public getHookManager(): HookManager | undefined {
+        return this.hookManager;
+    }
+
+    public canSpawnSubagent(parentAgentName: string | undefined, targetAgentName?: string): boolean {
+        if (!parentAgentName || !targetAgentName) return true;
+        const parent = this.definitions.get(parentAgentName);
+        const allowed = parent?.manifest.allowedAgents;
+        if (!allowed || allowed.length === 0) return true;
+        return allowed.includes(targetAgentName);
+    }
+
     private resolveSkillsContext(skillNames: string[]): string {
         if (skillNames.length === 0) return "";
         const resolved = this.skillManager.resolveSkills(skillNames);
@@ -250,5 +274,27 @@ export class AgentManager {
             "Loaded Skills Context:",
             ...resolved.map((skill) => `- [${skill.name}] ${skill.description || ""}\n${skill.content}`.trim())
         ].join("\n\n");
+    }
+
+    private resolveMemoryContext(scope?: "user" | "project" | "local"): string {
+        if (!scope) return "";
+        const paths =
+            scope === "user"
+                ? [join(os.homedir(), ".omniagent", "memory", "user.md")]
+                : scope === "project"
+                    ? [join(process.cwd(), ".omniagent", "memory", "project.md")]
+                    : [join(process.cwd(), ".omniagent", "memory", "local.md")];
+        for (const p of paths) {
+            if (!existsSync(p)) continue;
+            try {
+                const text = readFileSync(p, "utf8").trim();
+                if (text) {
+                    return `Loaded ${scope} memory:\n${text}`;
+                }
+            } catch {
+                // ignore
+            }
+        }
+        return "";
     }
 }
